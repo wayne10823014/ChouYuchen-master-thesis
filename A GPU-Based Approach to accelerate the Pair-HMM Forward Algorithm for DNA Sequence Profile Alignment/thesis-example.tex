@@ -1,0 +1,145 @@
+\documentclass[PhD]{PHlab-thesis}
+
+\addbibresource{thesis-example.bib}
+
+\newcommand*\Department中文{資訊工程學研究所}
+\newcommand*\Department英文{Institute of Computer Science and Information Engineering}
+
+\newcommand*\ThesisTitle中文{視覺化轉錄因子結合位點DNA\退{1}甲基化的新方法：MethylSeqLogo}
+\newcommand*\ThesisTitle英文{MethylSeqLogo: A Novel Method for the Vizualization of DNA Methylation at Transcription Factor Binding Sites}
+\newcommand*\ThesisNote中文{示例:其實徐翡曼是東京大學畢業的博士}% For real thesis omit, or use {初稿} etc.
+\newcommand*\ThesisNote英文{Just an example.  Fei-Man actually graduated from Tokyo Univ.}% For real thesis omit, or use {draft} etc.
+
+\newcommand*\Student中文{徐翡曼}
+\newcommand*\Student英文{Fei-man Hsu}
+
+\newcommand*\Advisor中文{賀保羅}
+\newcommand*\Advisor英文{Paul Horton}
+
+%% 果有共同指導老師可以用:
+%% \newcommand*\CoAdvisorA中文{}
+%% \newcommand*\CoAdvisorA英文{}
+%% \newcommand*\CoAdvisorB中文{}
+%% \newcommand*\CoAdvisorB英文{}
+
+
+\newcommand*\YearMonth英文{July, 2022}
+\newcommand*\YearMonth中文{１１１年７月}
+
+\pagestyle{fancy}% Use fancyhdr
+\begin{document}
+
+
+\newcommand*\Keywords英文{bioinformatics, genomics, string algorithms}
+\newcommand*\Abstract英文{%
+\textbf{BACKGROUND:}
+Sequence logos can effectively visualize position specific base preferences evident in a collection of binding sites of some transcript factor.  But those preferences usually fall far short of fully explaining binding specificity.
+Interestingly, several transcription factors bind sites of potentially methylated DNA.  For example, MYC binds CpG sites.  This may increase binding specificity as such sites are 1) highly under-represented in the genome, and 2) offer additional, tissue specific information in the form of hypo- or hyper-methylation.  Fortunately, data suitable to look into this possibility (e.g.\ bisulfite sequencing) is readily available.\\
+\textbf{METHOD:}
+We developed MethylSeqlogo, an extension of sequence logos which adds DNA methylation information to sequence logos.  MethylSeqlogo includes new elements to indicate DNA methylation and under-represented dimers in each position of a set of aligned binding sites.  Our method displays information from both DNA strands, and takes into account the sequence context (CpG or other) and genome region (promoter versus whole genome) appropriate to properly assess the expected background dimer frequency and level of methylation.\\
+When designing MethylSeqlogo, we took care to preserve the usual sequence logo meaning of heights; in which the relative height of nucleotides within a column represents their proportion in the binding sites, while the absolute height of each column represents information (relative entropy) and the height of all columns added together represents total information.\\
+\textbf{RESULTS:}
+We present several figures illustrating the utility of using MethylSeqlogo to summarize data from CpG binding transcription factors.  The logos show that unmethylated CpG binding sites are a feature of transcription factors such as Myc and ZBTB33, while some other CpG binding transcription factors, such as CEBPB, appear methylation neutral.
+We also compare MethylSeqlogo with two previously reported ways to create methylation aware sequence logos and conclude that MethylSeqlogo compares favorably to those methods.
+Our freely available software enables users to explore large-scale bisulfite and ChIP sequencing data sets --- and in the process obtain publication quality figures.}
+
+
+\newcommand*\Keywords中文{生命科學、基因組、字串演算法}
+\newcommand*\Abstract中文{%
+MethylSeqLogo...衍伸sequence logo的視覺化方法改善包括DNA甲基化的資訊。核基因體胞嘧啶甲基化為脊椎動物重要的表觀遺傳之一。可以經過亞硫酸鹽處理之後定序DNA的實驗(bisulfite sequencing)得到胞嘧啶甲基化的資訊。
+甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。甲基化的資訊。
+}
+
+\newcommand*\Acknowledgements{%
+感謝我...}
+
+
+
+\input{frontmatter}% 封面頁, 口委中英文簽名單, 誌謝, 中英文摘要, 論文目錄, 圖表目錄
+
+
+%────────────────────  List of Symbols  ────────────────────
+\renewcommand\nomgroup[1]{%
+  \item[\bfseries
+  \ifstrequal{#1}{A}{General}{%
+  \ifstrequal{#1}{Z}{Gene/Protein Names}%
+  }]}
+
+\nomenclature[A]{$\lg$}{Logarithm base 2}
+\nomenclature[A]{KL\ Divergence}{Kullback-Liebler Divergence}
+\nomenclature[Z]{Myc}{MYC proto-oncogene}
+\nomenclature[Z]{USF-1}{Upstream stimulatory factor 1}
+
+\printnomenclature[5cm]
+
+\newpage
+\setcounter{page}{1}
+\pagenumbering{arabic}
+
+
+
+\chapter{Introduction}
+DNA methylation is a major component of the epigenetic state of cells, as as such plays a critial role in the differentiation and maintenance of cell type.  Consequentially, aberrant DNA methylation plays a central role in cancer --- a manifestation of defective regulation of cell behavior.
+
+
+\chapter{Related Works}
+The characteristics of NuMT insertion sites have been analyzed in depth~\cite{TFH12}.
+Add your related works here.
+
+Schneider \& Stephens introduced sequence logos many years ago~\cite{SS90}.
+
+
+
+\chapter{Method}
+\section{Mathematical Model}
+\subsection{Notation}
+The notation used in this thesis is summarized in table~\ref{tab:notation}.
+
+\subsection{Likelihood Calculation}
+Our model assumes the data follows a standard normal distribution $𝒩(μ,σ²)$, so the likelihood function is:
+
+\begin{align*}
+ℒ  \;=&\;\;  \frac{1}{σ\sqrt{2π}}\, \exp\Big( \frac{-(x-μ)²}{2σ²}\Big)\\[.5ex]% .5ex adds extra vertical height
+     ∝&\;\;  σ⁻¹\, \exp\big( -½\,z²)  \hspace{1cm} \text{where~~} z ≝ \frac{x-μ}{σ}
+\end{align*}
+
+
+
+\begin{table}
+\begin{tabularx}{0.9\linewidth}{lX}
+Notation                                               &  Description\\
+\toprule
+$P_{\text{meth}\,|\,\textsf{context,BG}}$                    &  The background probability of methylation by context.\\[.3ex]
+$n_{\textsf{context},\,i}$                                 &  The number of cytosines (with sufficient read coverage)\newline of the given context occurring at position $i$ in the set of TFBS.\\[.3ex]
+$\overline{v}\,|\,\scriptstyle{\textsf{context},i}$  & The average methylation values of those cytosines.\\
+\bottomrule
+\end{tabularx}
+\caption{Summary of notation used in this thesis.}
+\label{tab:notation}
+\end{table}
+
+\section{Proposed Scheme}
+Write a bunch of stuff here.
+
+	
+\chapter{Results}
+Describe your results here.
+
+
+\chapter{Discussion}
+Discussion the significance or your results.
+
+
+\section{Future Work}
+
+
+\chapter{Conclusion}
+Add your conclusions here.
+
+
+\newpage
+\AddToContents{Bibliography}
+\printbibliography
+
+
+\end{document}

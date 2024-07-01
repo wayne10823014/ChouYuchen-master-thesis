@@ -1,0 +1,69 @@
+%% Author: Paul Horton
+%% Copyright (C) 2022, Paul Horton, All rights reserved.
+%% Created: 20220708
+%% Updated: 20220708
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{A few \LaTeX\ tips}
+\author{Paul Horton}
+
+\newcommand*\itembf[1]{\item \textbf{#1}\\}
+
+\begin{document}
+
+\maketitle
+
+
+\begin{itemize}
+\itembf{Suppressing the enlarged space after a ``\,.\,''}
+Usually ``\,.\,'' indicates the end of a sentence, so \TeX\ puts an enlarged space after it.
+For example: ``\texttt{The cat ran.  The dog ran too.}'', yields
+\begin{center}\fbox{The cat ran.  The dog ran too.}\end{center}
+When a ``\,.\,'' does not end a sentence, it should be followed by a slash space.
+%
+For example: ``\texttt{The cat ran.  Smith et al.\textbackslash\ claim that.}'', yields
+\begin{center}\fbox{The cat ran.  Smith et al.\ claim that.}\end{center}
+%
+The line break suppressing space characer '\textasciitilde', also suppresses space enlargement.
+``\texttt{The cat ran.  Smith et al.\textasciitilde claim that.}'', yields
+\begin{center}\fbox{The cat ran.  Smith et al.~claim that.}\end{center}
+%
+Compared to: ``\texttt{The cat ran.  Smith et al. claim that.}'', yielding
+\begin{center}\fbox{The cat ran.  Smith et al. claim that.}\end{center}
+Notice in this last example the space after ``et al.'' is (slightly) enlarged, same as the space after ``cat ran.''.
+
+
+\itembf{Typesetting of ``et al.'' and ``e.g.''}
+I prefer not to italize some latin-base abbreviations such as ``et al.'', ``e.g.'', or ``etc.''.
+I am aware of the general rule that latin (and other ``foreign'' words) should be italicized,
+and by that rule perhaps ``et al.'', ``e.g.'' and ``etc.''
+(short for \textit{et alia}, \textit{exampli gratia}, and \textit{et cetera}) should be italicized.
+However they are so common and ordinary in scientific writing that I think italicizing them
+simply distracts the readers eyes away from more important words.
+
+
+\itembf{math: ``\texttt{\textbackslash exp(x)}'' not ``\texttt{exp(x)}''.}
+In \TeX\ math mode, ``\texttt{exp}'' is interpreted as the product of the variables $e$, $x$ and $p$.
+This looks like:
+\begin{center}\fbox{$exp(x)$}\end{center}
+What you want is ``\texttt{\textbackslash exp(x)}'', which looks like:
+\begin{center}\fbox{$\exp(x)$}\end{center}
+
+Similar macros are predefined for most common math functions, such as $\lg$ and $\sin$ etc.\
+(either in basic \LaTeX\ or in the standard package \texttt{amsmath}).
+
+\begin{samepage}
+If necessary you can define your own math functions (operators) using the macros \texttt{\textbackslash DeclareMathOperator}, or \texttt{\textbackslash DeclareMathOperator*} from package \texttt{amsmath}.
+
+Finally there is the handy \texttt{\textbackslash text} macro, also from \texttt{amsmath}.
+Compare, \texttt{\$P[w|it rained yesterday]\$}'', yeilding:
+\begin{center}\fbox{$P[w|it rained yesterday]$}\end{center}
+With ``\texttt{\$\textbackslash text\{P\}[w|\textbackslash text\{it rained yesterday\}]\$}'', yielding:
+\begin{center}\fbox{$\text{P}[w|\text{it rained yesterday}]$}\end{center}
+Notice the ``P'' for probability is upright, like in normal text.  I think P for probability looks better this way than slanted like a variable $P$.
+\end{samepage}
+
+\end{itemize}
+
+\end{document}

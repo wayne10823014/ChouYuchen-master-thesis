@@ -1,0 +1,22 @@
+
+\RequirePackage{xeCJK}
+
+\xeCJKsetup{CJKecglue={\hskip 0.08em plus 0.07\baselineskip}}
+
+\newcommand*\FontDir{fonts/}
+
+\defaultfontfeatures[times]{Path=\FontDir,%
+UprightFont=      times.ttf,%
+ItalicFont=      timesi.ttf,%
+BoldFont=        timesbd.ttf,%
+BoldItalicFont=  timesbi.ttf,%
+}
+
+\setmainfont{times}
+
+\setCJKmainfont[Path=\FontDir,AutoFakeBold,AutoFakeSlant]{kaiu.ttf}
+
+
+% 調整中文的基線，配合英文字型。
+\renewcommand*\CJKsymbol[1]{\raise0.08ex\hbox{#1}}
+\let\CJKpunctsymbol\CJKsymbol

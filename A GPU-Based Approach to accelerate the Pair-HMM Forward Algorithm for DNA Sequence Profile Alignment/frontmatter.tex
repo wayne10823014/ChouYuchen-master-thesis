@@ -1,0 +1,206 @@
+\newcommand*\SelectFontsize[2]{\fontsize{#1}{#1}\selectfont\mdseries#2\par}
+\newcommand*\SelectFontsizeBF[2]{\fontsize{#1}{#1}\selectfont\bfseries#2\par}
+\newcommand*\SignatureRule[1][6]{\rule{#1cm}{0.3mm}}
+\newcommand*\AddToContents[1]{\newpage\phantomsection\addcontentsline{toc}{chapter}{#1}}
+
+\doublespace
+\pagenumbering{gobble}
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+
+
+\begin{center}
+\vspace{2cm}
+\SelectFontsizeBF{24}{%
+\University中文\Department中文\\
+\學位 論文}
+
+\vfill
+\SelectFontsizeBF{24}{\ThesisTitle中文}
+\ifdefined\ThesisNote中文
+\SelectFontsize{22}{\textit{\ThesisNote中文}}
+\fi
+
+\vspace{5mm}
+\SelectFontsizeBF{22}{\ThesisTitle英文}
+\ifdefined\ThesisNote英文
+\SelectFontsize{20}{\textit{\ThesisNote英文}}
+\fi
+
+\vfill
+
+\begin{minipage}{\linewidth}
+{\setlength\tabcolsep{0pt}
+%
+\begin{tabular}{ Wr{5em} Wl{6em} Wr{5em} wl{7em} }
+研究生：   & ~~\Student中文  &      Student: & ~~\Student英文\\
+指導老師： & ~~\Advisor中文  &      Advisor: & ~~\Advisor英文\\
+\ifdefined\CoAdvisorA中文
+共同指導： & ~~\CoAdvisorA中文 &   Co-Advisor: & ~~\CoAdvisorA英文\\
+\fi
+\ifdefined\CoAdvisorB中文
+         & ~~\CoAdvisorB中文 &   Co-Advisor: & ~~\CoAdvisorB英文\\
+\fi
+\end{tabular}
+}
+\end{minipage}
+
+\vfill
+\SelectFontsize{18}{%
+National Cheng Kung University,\\
+Tainan, Taiwan, R.O.C.\\
+Thesis for \ifdef\PhD{Master of Science}{Doctor of Philosophy} Degree\\
+\YearMonth英文}
+
+\vfill
+\SelectFontsize{20}{中華民國\YearMonth中文}
+\end{center}
+
+
+
+\ifdefined\optCommittee
+\newpage
+\begin{center}
+\vspace{1cm}
+\SelectFontsizeBF{24}{%
+\University中文\Department中文\\
+\學位 論文}
+\vfill
+\SelectFontsizeBF{20}{\ThesisTitle中文}
+\end{center}
+
+\vfill
+\SelectFontsize{20}{%
+\noindent 研究生：\Student中文\\
+本論文業經審查及口試合格特此證明}
+
+
+\begin{center}
+\SelectFontsize{18pt}{論文考試委員}
+\vfill
+\SignatureRule \hspace*{1cm} \SignatureRule
+\vfill
+
+\SignatureRule \hspace*{1cm} \SignatureRule
+\vfill
+
+指導教授：\SignatureRule[8]
+\vfill
+　　所長：\SignatureRule[8]
+
+\vfill
+\SelectFontsize{18}{中華民國 \hspace{2em} 年 \hspace{2em} 月 \hspace{2em} 日}
+\end{center}
+
+
+\newpage
+\begin{center}
+\vspace{1cm}
+\SelectFontsize{18}{\University英文, \Department英文}
+\SelectFontsize{19}{\ifdef\PhD{Ph.D.}{Master's} Degree Thesis}
+
+\vfill
+\SelectFontsizeBF{20}{\ThesisTitle英文}
+\end{center}
+
+\vfill
+\SelectFontsize{18}{Student: \Student英文}
+
+\SelectFontsize{18}{%
+A thesis submitted to the graduate division in partial fulfillment of the requirement for the degree of
+\ifdef\PhD{Master of Science}{Doctor of \mbox{Philosophy}}.
+}
+
+\vfill
+\begin{center}
+\SelectFontsize{18}{Approved by}
+
+\vfill
+\SignatureRule \hspace*{1cm} \SignatureRule
+
+\vfill
+\SignatureRule \hspace*{1cm} \SignatureRule
+
+\vfill
+Advisor: \SignatureRule[8]
+
+\vfill
+Chairman: \SignatureRule[8]
+
+\vfill
+\SelectFontsize{18}{\YearMonth英文}
+\vspace*{20pt}
+\end{center}
+\fi% optCommittee
+
+
+\AddToContents{中文摘要}
+\setcounter{page}{1}
+\pagenumbering{roman}
+
+
+\begin{center}
+\SelectFontsizeBF{24}{\ThesisTitle中文}
+
+\vspace{4mm}
+\SelectFontsize{18}{\Student中文\footnote[1]{學生} ~ \Advisor中文\footnote[2]{指導教授}}
+
+\vspace{5mm}
+\SelectFontsize{20}{國立成功大學\Department中文}
+
+\vspace{12mm}
+\makebox[2.7cm][c]{\SelectFontsizeBF{22}{摘要}}
+\end{center}
+
+\vspace{4mm}
+\SelectFontsize{16}{\Abstract中文}
+
+\vspace{4mm}
+\begin{flushleft}
+\SelectFontsize{16}{\textbf{關鍵詞:} \Keywords中文}
+\end{flushleft}
+
+
+
+\AddToContents{Abstract}
+\begin{center}
+\SelectFontsizeBF{22}{\ThesisTitle英文}
+
+\vspace{4mm}
+\SelectFontsize{18}{\Student英文\footnote[1]{Student} ~ \Advisor英文\footnote[2]{Advisor}}
+
+\vspace{4mm}
+\SelectFontsize{16}{\Department英文, National Cheng Kung University}
+
+\vspace{12mm}
+\SelectFontsizeBF{20}{Abstract}
+\end{center}
+
+\vspace{4mm}
+\SelectFontsize{14}{\Abstract英文}
+
+\vspace{4mm}
+\begin{flushleft}
+\SelectFontsize{16}{\textbf{Keywords:} \Keywords英文}
+\end{flushleft}
+
+
+
+\AddToContents{誌謝}
+\begin{center}\SelectFontsizeBF{24}{誌謝}\end{center}
+
+\vspace{4mm}
+\Acknowledgements
+
+
+
+\renewcommand{\contentsname}{CONTENTS}
+\AddToContents{Contents}
+\tableofcontents
+
+
+\AddToContents{List of Tables}
+\listoftables
+
+
+\AddToContents{List of Figures}
+\listoffigures
