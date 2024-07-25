@@ -10,7 +10,7 @@
 
 
 \newcommand*\Student中文{周育晨}
-\newcommand*\Student英文{Yu-chen Chou}
+\newcommand*\Student英文{Yu-Chen Chou}
 
 \newcommand*\Advisor中文{賀保羅}
 \newcommand*\Advisor英文{Paul Horton}
@@ -36,8 +36,8 @@
 \newcommand*\Keywords英文{GPU acceleration, DNA sequence, pair HMM forward algorithm}
 \newcommand*\Abstract英文{%
 \textbf{}
-DNA sequence alignment is a critical task in bioinformatics, essential for gene identification, evolutionary studies, and personalized medicine. The Pair HMM Forward Algorithm is a common and accurate method for aligning sequences, accounting for insertions, deletions, and matches between sequences. However, its computational demands are substantial, especially with large-scale genomic data.
-In order to solve the main issue of substantial computations, we present a GPU-based approach to accelerate the Pair Hidden Markov Model (HMM) Forward Algorithm for DNA sequence profile alignment in this study. By utilizing the parallel computational capabilities of modern GPUs, we aim to optimize the performance and efficiency of this algorithm. Our method introduces dynamic block configuration, anti-diagonal parallel  and anti-diagonal memory storage, ensuring efficient utilization of GPU resources and improved computational speed. These optimizations address the bottleneck of traditional CPU-based implementations, such as inefficient computation and suboptimal load balancing. Experimental results demonstrate significant performance gains over CPU-based methods in large-scale DNA sequence, making GPU-based approach highly suitable for large-scale genomic sequence alignment tasks. This advancement provides a considerable solution with scalability and efficiency to handle the growing size of genomic data in bioinformatics.}
+DNA sequence alignment is a critical task in bioinformatics, essential for gene identification, evolutionary studies, and personalized medicine. The Pair Hidden Markov Model (HMM) Forward Algorithm is a common and accurate method for aligning sequences, accounting for insertions, deletions, and matches between sequences. However, its computational demands are substantial, especially with large-scale genomic data.
+In order to solve the main issue of substantial computations, we present a GPU-based approach to accelerate the Pair-HMM Forward Algorithm for DNA sequence profile alignment in this study. By utilizing the parallel computational capabilities of modern GPUs, we aim to optimize the performance and efficiency of this algorithm. Our method introduces dynamic block configuration, anti-diagonal parallel  and anti-diagonal memory storage, ensuring efficient utilization of GPU resources and improved computational speed. These optimizations address the bottleneck of traditional CPU-based implementations, such as inefficient computation and suboptimal load balancing. Experimental results demonstrate significant performance gains over CPU-based methods in large-scale DNA sequence, making GPU-based approach highly suitable for large-scale genomic sequence alignment tasks. This advancement provides a considerable solution with scalability and efficiency to handle the growing size of genomic data in bioinformatics.}
 
 
 \newcommand*\Keywords中文{GPU加速、基因序列、成對隱性馬可夫模型向前演算法}
@@ -63,7 +63,9 @@ DNA序列比對是生物訊息學中一項相當關鍵的任務，對於基因�
 \nomenclature[A]{GPU}{Graphics Processing Unit}
 \nomenclature[A]{HMM}{Hidden Markov Model}
 \nomenclature[A]{NGS}{Next Generation Sequencing}
-\nomenclature[A]{SNPs}{single nucleotide polymorphisms}
+\nomenclature[A]{SNPs}{Single Nucleotide Polymorphisms}
+\nomenclature[A]{CUDA}{Compute Unified Device Architecture}
+\nomenclature[A]{GPGPU}{General-Purpose computing on Graphics Processing Units}
 \nomenclature[A]{TGS}{Third Generation Sequencing}
 
 
@@ -79,8 +81,8 @@ DNA序列比對是生物訊息學中一項相當關鍵的任務，對於基因�
 
 \chapter{Introduction}
 \section{Background}
-Next Generation Sequencing (NGS) provides unprecedented speed, scalability, and accuracy for generating DNA sequencing data, significantly improving the efficiency and cost-effectiveness of acquiring such data.~\cite{NGS,NGS2}. Those data allow researchers to understand genetic relationships, identify genes, and conduct evolutionary studies better by using DNA sequence alignment to analyse the relationships between genomic data~\cite{NGS3,NGS4}. \newline
-Pair-HMM is a probabilistic model designed to align two biological sequences (such as DNA or protein sequences) by modeling the sequence alignment process using hidden states (Match, Insert, Delete)~\cite{HMM,PHMM,RHMM}. We could model the DNA alignment problem with Pair-HMM with three hidden States: match (M), insert (I), delete (D); and five Visible Alphabets: adenine (A), cytosine (C), guanine (G), thymine (T) and gap(-)~\cite{EnliangLi}. The figure \ref{fig:state diagram} has shown the state diagram of Pair-HMM and \textit{$t_{state,state}$} is the transition probability which is the probability of moving from one state to another (e.g. \textit{$t_{M,I}$} represent the Match state to Insert state). The Table \ref{tab:hidden state} provides an example of how the Pair-HMM generates the hidden states for a given pair of sequences. The third row of table is Hidden state represents the hidden states corresponding to the alignment of the nucleotide from the read and haplotype sequences.
+Next Generation Sequencing (NGS) provides unprecedented speed, scalability, and accuracy for generating DNA sequencing data, significantly improving the efficiency and cost-effectiveness of acquiring such data~\cite{NGS,NGS2}. Those data allow researchers to understand genetic relationships, identify genes, and conduct evolutionary studies better by using DNA sequence alignment to analyse the relationships between genomic data~\cite{NGS3,NGS4}. \newline
+Pair-HMM is a probabilistic model designed to align two biological sequences (such as DNA or protein sequences) by modeling the sequence alignment process using hidden states (Match, Insert, Delete)~\cite{HMM,PHMM,RHMM}. We could model the DNA alignment problem with Pair-HMM with three hidden States: match (M), insert (I), delete (D); and five characters: adenine (A), cytosine (C), guanine (G), thymine (T) and gap(-)~\cite{EnliangLi}. Figure \ref{fig:state diagram} has shown the state diagram of Pair-HMM and \textit{$t_{state,state}$} is the transition probability which is the probability of moving from one state to another (e.g. \textit{$t_{M,I}$} represent the Match state to Insert state). The Table \ref{tab:hidden state} provides an example of how the Pair-HMM generates the hidden states for a given pair of sequences. The third row of table is Hidden state represents the hidden states corresponding to the alignment of the nucleotide from the read and haplotype sequences.
 \begin{figure}[h]
     \centering
     \includegraphics[width=0.7\linewidth]{figure/state.png}
@@ -103,9 +105,10 @@ Therefore, the probability \textit{P} of this pair of read and haplotype sequenc
 P &= e(A,A) \times\ t_{M,M} \times\ e(C,C) \times\ t_{M,I} \times\ e(C,-) \times\ t_{I,M} \\
   &\quad\times\ e(G,G) \times\ t_{M,D} \times\ e(-,A)
 \end{align*}
+
 In this equation, \textit{e(alphabet,alphabet)} typically represents the "emission probability". The emission probability is the probability of observing a particular visible alphabet given a specific state in the model. \textit{$t_{state,state}$} is the transition probability which is the probability of moving from one state to another as the mentioned above.
 
-The Pair Hidden Markov Model (HMM) Forward Algorithm is one of the most accurate methods for sequence alignment~\cite{Shanshan1,EnliangLi1}. It is a computational method used within the context of the Pair-HMM to calculate the probability of an observed sequence alignment. The final alignment probability is the most critical piece of information for understanding how well two sequences align under the given model.
+The Pair-HMM Forward Algorithm is one of the most accurate methods for sequence alignment~\cite{Shanshan1,EnliangLi1}. It is a computational method used within the context of the Pair-HMM to calculate the probability of an observed sequence alignment without any conditionals. The final alignment probability is the most critical piece of information for understanding how well two sequences align under the given model.
 
 The Pair-HMM Forward Algorithm is shown as in Algorithm 1. \textit{M}, \textit{I} and \textit{D} are the forward matrices used to store the probabilities of the sequences aligning through matching, insertion, or deletion. \textit{m} and \textit{n} are the length of the read \textit{R} and the haplotype \textit{H}. $e_{i,j}$ represents the Emission Probability which is the probability of current State emitting the given pair character($Read_{i},Haplotype_{j}$).  $t_{A,B}$ represents the Transition probability which is the probability of transitioning from state A to state B, as the mention above.
 The Pair-HMM Forward Algorithm used dynamic programming technique to iterate through all possible alignments between the read and reference sequence. It can be broken down into four key steps.
@@ -116,8 +119,8 @@ The Pair-HMM Forward Algorithm used dynamic programming technique to iterate thr
 
 (3) \textbf{Updating:} In Line 4, 5 and 6, update the forward matrices with the corresponding cells. The Match state also needs to consider the emission probability because it represents the likelihood of aligning the current nucleotide in the read with the current nucleotide in the haplotype. 
 
-(4)\textbf{Calculates likelihood:} In Line 7, after completing the nested loops, the algorithm calculates the total likelihood of observing the read sequence given the haplotype by summing the final entries in the Match and Insert matrices : $\sum_{j=1}^{n} (M_{m,j} + I_{m,j})$ \textbf{for} $1 \leq j \leq n$.\newline
-However, along with accurate results comes a huge amount of computation. The pair HMM Forward Algorithm is computationally intensive especially  processing large-scale genomic data. Moreover, with the growing DNA sequencing data, the overhead of computation is becoming heavier and heavier. Here is the one of the motivations of this work.\newline
+(4) \textbf{Calculates likelihood:} In Line 7, after completing the nested loops, the algorithm calculates the total likelihood of observing the read sequence given the haplotype by summing the final entries in the Match and Insert matrices : $\sum_{j=1}^{n} (M_{m,j} + I_{m,j})$ \textbf{for} $1 \leq j \leq n$.\newline
+However, along with accurate results comes a huge amount of computation. The pair HMM Forward Algorithm is computationally intensive especially  processing large-scale genomic data. Moreover, with the growing DNA sequencing data, the overhead of computation is becoming heavier and heavier. \newline
 % 定義自定義命令以隱藏end for
 \algtext*{Procedure}
 \algtext*{EndFor}
@@ -141,12 +144,13 @@ However, along with accurate results comes a huge amount of computation. The pai
 \end{algorithm}
 
 \section{Motivation}
-In DNA sequence alignment, the use of DNA sequence profiles is crucial due to sequencing errors and the common presence of single nucleotide polymorphisms (SNPs) in humans ~\cite{Xuhua,Dimitrios}. Sequencing errors cause the sequenced DNA to differ from the actual DNA sequence ~\cite{sequencingError}. To address these errors, it is essential to incorporate a probabilistic model into the alignment algorithm. By representing each base as a probability, the alignment process can better accommodate the uncertainties in the sequencing results, resulting in more accurate alignments. SNPs are the most common type of genetic variation among individuals of the same species, where a single base pair differs between individuals ~\cite{Xuhua}. SNPs are common in the human genome and must be considered during sequence alignment. Utilizing DNA sequence profiles enables each position in the sequence to be represented as a probability distribution, capturing the variability caused by SNPs. This probabilistic representation helps the alignment process to more precisely match sequences by considering these common variations.\newline
+In DNA sequence alignment, the use of DNA sequence profiles is crucial due to sequencing errors and the common presence of single nucleotide polymorphisms (SNPs) in humans ~\cite{Xuhua,Dimitrios}. Sequencing errors cause the sequenced DNA to differ from the actual DNA sequence ~\cite{sequencingError}. To address these errors, it is essential to incorporate a probabilistic model into the alignment algorithm. By representing each base as a probability, the alignment process can better accommodate the uncertainties in the sequencing results, resulting in more accurate alignments. SNPs are the most common type of genetic variation among individuals of the same species, where a single base pair differs between individuals ~\cite{Xuhua}. SNPs are common in the human genome and must be considered during sequence alignment. Utilizing DNA sequence profiles enables each position in the sequence to be represented as a probability distribution, capturing the variability caused by SNPs. This probabilistic representation helps the alignment process to more precisely match sequences by considering these common variations.
 
-In addition to utilizing profiles for more precise analysis, the speed of computation is also a crucial point. As previously mentioned, with the increasing volume of DNA sequencing data, the computational burden of pair HMM Forward Algorithm grows heavier. Therefore, we have opted to leverage CUDA to harness the benefits of parallel computing on GPUs to achieve accelerated performance.\newline
+In addition to utilizing profiles for more precise analysis, the speed of computation is also a crucial point. As previously mentioned, with the increasing volume of DNA sequencing data, the computational burden of pair HMM Forward Algorithm grows heavier. Therefore, we have opted to leverage CUDA to harness the benefits of parallel computing on GPUs to achieve accelerated performance.
 
 \section{CUDA}
-CUDA (Compute Unified Device Architecture) is a parallel computing platform and programming model developed by NVIDIA~\cite{CUDA}. It enables developers to utilize NVIDIA GPUs for general-purpose computing, often referred to as GPGPU (General-Purpose computing on Graphics Processing Units). CUDA allows developers to write code in programming languages such as C, C++, which can then be executed on GPUs to perform large-scale parallel computations.\newline
+CUDA (Compute Unified Device Architecture) is a parallel computing platform and programming model developed by NVIDIA~\cite{CUDA}. It enables developers to utilize NVIDIA GPUs for general-purpose computing, often referred to as GPGPU (General-Purpose computing on Graphics Processing Units). CUDA allows developers to write code in programming languages such as C, C++, which can then be executed on GPUs to perform large-scale parallel computations.
+
 Three of the main advantages about CUDA : (1) Parallel Execution: CUDA provides an environment through which developers can access GPU hardware via a programming interface, enabling them to run compute-intensive tasks directly on the GPU. (2) Efficient Memory Management: CUDA offers efficient memory management functions to transfer data between the host and device. Makes it easier for developers to design their kernel to achieve their goals in an efficient way. (3) Scalability: CUDA allows developers to write code that can efficiently handle increasing problem sizes and leverage the full computational power of the GPU. By properly managing threads, memory, streams, and utilizing multiple GPUs, CUDA applications can achieve significant performance improvements for large-scale and complex computations.  
 
 The figure \ref{fig:core component} provides a visual representation of the core components of CUDA architecture, illustrating the relationship between the host (CPU) and the device (GPU) ~\cite{CUDA}. (1) \textbf{Host}: The host represents the CPU, which is responsible for launching and managing the execution of CUDA kernels on the GPU. Besides, the host prepares the data, transfers it to the device and initiates the kernel execution. (2) \textbf{Device}: The device represents the GPU, which executes the computational kernels. The GPU consists of several multiprocessors, each containing many cores capable of executing hundred of threads concurrently. (3) \textbf{Kernel}: Kernel is a function written in CUDA C/C++ that runs on the GPU. When a kernel is launched, it is executed by a large number of parallel threads on the GPU. (4) \textbf{Grid}: The grid is a collection of blocks. In this figure, Grid 1 is shown as containing multiple blocks. Each grid corresponds to a kernel launch, and all blocks within a grid execute the same kernel function. The grid structure allows for organizing computations over large datasets. (5) \textbf{Block}: Block is a group of threads that can cooperate by sharing data through shared memory and synchronizing their execution. Each block is identified by its indices, such as Block (0,0), Block (0,1), and so on. Blocks are scheduled on different multiprocessors of the GPU. (6) \textbf{Thread}: Thread is the smallest unit of execution in CUDA. Each thread within a block has a unique thread index. Threads within the same block can communicate and synchronize with each other, making it possible to solve complex problems efficiently. The figure illustrates the thread layout within Block (1,1), showing threads indexed from Thread (0,0) to Thread (2,2).
@@ -158,9 +162,8 @@ The figure \ref{fig:core component} provides a visual representation of the core
     \label{fig:core component}
 \end{figure}
 
-
 \chapter{Related Work}
-Previous studies have attempted to enhance the performance of the pair HMM Forward Algorithm in various ways. Shanshan Ren et al.~\cite{Shanshan} focused on two GPU-based implementations: (1) \textbf{Intertask}: Each thread independently executes the algorithm on a different pair of sequences (read haplotype), meaning each thread runs the Pair-HMM Forward Algorithm independently, requiring synchronization with other threads. (2) \textbf{Intratask}: This involves breaking down the computation within a single instance of the algorithm into smaller subtasks that can be executed concurrently by multiple threads. For instance, segments of the dynamic programming matrix can be computed in parallel, but the parallelism must synchronize at specific points to ensure that data dependencies are respected. Enliang Li et al.~\cite{EnliangLi} utilize GPU with Anti-Diagonal Parallelization to accelerate the Pair-HMM Forward algorithm which is a common acceleration technique for dynamic programming with GPU parallel computing. Besides, they also use shared memory to store intermediate data prevent from the noble communication between host and device. Subho S. Banerjee et al.~\cite{Subho}and Sitao Huang et al.~\cite{Sitao} implement the Pair-HMM Forward Algorithm on a Field-Programmable Gate Array (FPGA) with enhanced data forwarding strategies and customized computation routines for improved performance.
+Previous studies have attempted to enhance the performance of the pair HMM Forward Algorithm in various ways. Shanshan Ren et al.~\cite{Shanshan} focused on two GPU-based implementations: (1) \textbf{Intertask}: Each thread independently executes the algorithm on a different pair of sequences (read haplotype), meaning each thread runs the Pair-HMM Forward Algorithm independently, requiring synchronization with other threads. (2) \textbf{Intratask}: This involves breaking down the computation within a single instance of the algorithm into smaller subtasks that can be executed concurrently by multiple threads. For instance, segments of the dynamic programming matrix can be computed in parallel, but the parallelism must synchronize at specific points to ensure that data dependencies are respected. Enliang Li et al.~\cite{EnliangLi} utilize GPU with Anti-Diagonal Parallelization to accelerate the Pair-HMM Forward algorithm which is a common acceleration technique for dynamic programming with GPU parallel computing. Besides, they also use shared memory to store intermediate data prevent from the expensive communication between host and device. Subho S. Banerjee et al.~\cite{Subho} and Sitao Huang et al.~\cite{Sitao} implement the Pair-HMM Forward Algorithm on a Field-Programmable Gate Array (FPGA) with enhanced data forwarding strategies and customized computation routines for improved performance.
 
 However, those studies all focus on DNA sequence, not DNA sequence profile. As noted above, DNA sequence profile is important to obtain a more precise analysis. Therefore, we leverage the advantages of the previous GPU-based accelerating method to develop an improved version of the Pair-HMM forward algorithm for DNA sequence profiles, which is suitable for large-scale genomic data. We will discuss the difference in the pair-HMM forward algorithm when the profile is considered in the next chapter.
 
@@ -202,6 +205,9 @@ The algorithm 2 illustrates the process of calculating the Profile Emission Prob
 \end{algorithmic}
 \end{algorithm}
 \vspace{0.5cm} % Add vertical space before the algorithm
+\[
+\text{totalProb} = \sum_{i \in \{A,C,G,T\}} (\text{readProb}_i \times \text{emissionMatrix}_{\text{state},i,\text{haplotype}})
+\]
 \newpage
 Algorithm 3 presents the pseudocode of the Pair-HMM Forward Algorithm with Profile Emissions. The key difference between this version and the traditional Pair-HMM Forward Algorithm lies in the update process for the forward matrices.When updating the \textbf{Match} and \textbf{Insert} matrices, the algorithm incorporates the profile emission probabilities. This means that the entire probability distribution over possible nucleotides at each position in the read is considered. This is crucial for accurately modeling the uncertainty and variability in sequencing data.In contrast, for the \textbf{Delete} matrix, the nucleotide in the read sequence $read_{i}$ is a gap. Therefore, the profile emission probabilities are not needed for the Delete state.
 \vspace{0.5cm} % Add vertical space before the algorithm
@@ -225,7 +231,7 @@ Algorithm 3 presents the pseudocode of the Pair-HMM Forward Algorithm with Profi
 \end{algorithm}
 \vspace{0.5cm} % Add vertical space before the algorithm
 \newline
-By considering the entire probability distribution over possible nucleotides at each position, the algorithm effectively handles the uncertainties inherent in high-throughput sequencing data. This results in more reliable and meaningful alignments.
+By considering the entire probability distribution over possible nucleotides at each position, the algorithm effectively handles the uncertainties inherent in high-throughput sequencing data. This should result in more reliable and meaningful alignments.
 
 \chapter{Methods}
 In this chapter, we will introduce the implementation details of our gpu-accelerated version.
@@ -240,7 +246,7 @@ Figure \ref{fig:workflow} illustrates the workflow for Host and Device, which ca
 \end{figure}
 
 \section{Flatten}
-In CUDA, flattening multi-dimensional arrays into a one-dimensional array is a common method. This approach simplifies memory access patterns, enhances performance, and aligns better with CUDA’s memory model. CUDA supports only one-dimensional (1D) linear memory addressing. While CUDA kernels can work with multi-dimensional data, such as 2D or 3D arrays, they need to convert these data structures into a linear memory space. Flattening these structures into a 1D array makes it easier to manage and access memory using a single index calculation. In this way, we could improve Memory Coalescing. Memory coalescing is a mechanism that allows for efficient memory access by combining multiple memory operations into a single transaction. For best performance, neighboring threads should access contiguous memory addresses. Flattening multi-dimensional arrays ensures that adjacent elements in the array are stored contiguously in memory, which enhances the likelihood of memory coalescing and improves overall memory bandwidth utilization. Hence, before we transfer the forward matrices from host to device, we should flatten them into 1D arrays to have efficient memory access.
+In CUDA, flattening multi-dimensional arrays into a one-dimensional array is a common method. This approach simplifies memory access patterns, enhances performance, and aligns better with CUDA memory model. CUDA supports only one-dimensional (1D) linear memory addressing. While CUDA kernels can work with multi-dimensional data, such as 2D or 3D arrays, they need to convert these data structures into a linear memory space. Flattening these structures into a 1D array makes it easier to manage and access memory using a single index calculation. In this way, we could improve Memory Coalescing. Memory coalescing is a mechanism that allows for efficient memory access by combining multiple memory operations into a single transaction. For best performance, neighboring threads should access contiguous memory addresses. Flattening multi-dimensional arrays ensures that adjacent elements in the array are stored contiguously in memory, which enhances the likelihood of memory coalescing and improves overall memory bandwidth utilization. Hence, before we transfer the forward matrices from host to device, we should flatten them into 1D arrays to have efficient memory access.
 
 \begin{figure}[h]
     \centering
@@ -337,9 +343,9 @@ The Algorithm 4 presents the pseudocode for anti-diagonal parallelization of pai
     \If{$i > 0$ and $i \leq m$ and $j > 0$ and $j \leq n$}
         \State $e_{M_{i,j}} \gets \text{CalculateProfileEmission}(read_i, haplotype_j, emissionMatrix, Match)$
         \State $e_{I_{i,j}} \gets \text{CalculateProfileEmission}(read_{i-1}, gap, emissionMatrix, Insert)$
-        \State $M_{i,j} \gets e_{M_{i,j}} \times (t_{MM} \times M_{i-1,j-1} + t_{IM} \times I_{i-1,j-1} + t_{DM} \times D_{i-1,j-1})$
-        \State $I_{i,j} \gets e_{I_{i,j}} \times (t_{MI} \times M_{i-1,j} + t_{II} \times I_{i-1,j})$
-        \State $D_{i,j} \gets t_{MD} \times M_{i,j-1} + t_{DD} \times D_{i,j-1}$
+        \State $M_{i,j} \gets e_{M_{i,j}} (t_{MM} M_{i-1,j-1} + t_{IM} I_{i-1,j-1} + t_{DM}  D_{i-1,j-1})$
+        \State $I_{i,j} \gets e_{I_{i,j}}  (t_{MI}  M_{i-1,j} + t_{II}  I_{i-1,j})$
+        \State $D_{i,j} \gets t_{MD}  M_{i,j-1} + t_{DD}  D_{i,j-1}$
     \EndIf
 \EndFor
 
@@ -351,7 +357,7 @@ The Algorithm 4 presents the pseudocode for anti-diagonal parallelization of pai
 By using anti-diagonal parallel optimization, we can reduce the time complexity from $O(n*m)$ to $O(n+m)$, which is a significant advancement in reducing computation time if the read and haplotype are long sequence. However, the space complexity remains $O(n*m)$, resulting in the storage of the entire forward matrix. Therefore, we will introduce our method to reduce the space complexity in the following section.
 \newpage
 \section{Anti-Diagonal Rolling}
-In order to prevent from storing the whole forward matrix, we implement the anti-diagonal rolling technique, which is an common-used optimization technique in dynamic programming algorithm. In the former section, we have discussed about the data dependency of pair-HMM forward algorithm. We already know that the update of the cells on anti diagonal $i+j=k$ only depend on the previous anti-diagonal $i+j=k-1$ and $i+j=k-2$. Therefore, instead of storing the entire forward matrix, we only store the last two anti-diagonal sequence for the computation and record the current anti-diagonal cell for the next anti-diagonal iterate. 
+In order to avoid storing the whole forward matrix, we implement the anti-diagonal rolling technique, which is an common-used optimization technique in dynamic programming algorithm. In the former section, we have discussed about the data dependency of pair-HMM forward algorithm. We already know that the update of the cells on anti diagonal $i+j=k$ only depend on the previous anti-diagonal $i+j=k-1$ and $i+j=k-2$. Therefore, instead of storing the entire forward matrix, we only store the last two anti-diagonal sequence for the computation and record the current anti-diagonal cell for the next anti-diagonal iterate. 
 
 Figure \ref{fig:The example of Anti-Diagonal Rolling} shows an example where we only store the red cells and green cells for the update of the blue cells. After the updates of the blue cells are all finished, we perform the rolling step to shift the current anti-diagonal values to the previous anti-diagonal storage and update the current anti-diagonal storage for the next computation.
 Figure \ref{fig:The process of anti-diagonal rolling} illustrates the process of anti-diagonal rolling in more detail. Initially, the cells from the red (pre-previous), green (previous), and blue (current) anti-diagonals are stored. After the blue cells are updated, they are used to compute the yellow cells in the next anti-diagonal. The rolling process is as follows:
@@ -406,7 +412,7 @@ After implementing anti-diagonal rolling into our algorithm, a few changes have 
 \EndProcedure
 \end{algorithmic}
 \end{algorithm}
-\newline
+
 By incorporating anti-diagonal rolling, Algorithm 5 optimizes memory usage and enhances the computational efficiency of the Pair-HMM Forward Algorithm with Profile Emissions. This makes it more suitable for large-scale applications where memory resources are a critical concern.
 
 \chapter{Results}
@@ -510,8 +516,8 @@ The table \ref{tab:10,000} shows the comparison of the execution time with 10,00
     \label{tab:10,000}
 \end{table}
 \newline
-The table \ref{tab:100,000} displays the execution time with 100,000bp read and haplotype in seconds.
-10,000bp is the extremely long length of TGS data. The best configuration setting is dynamic block with a thread size 64. Once again, the dynamic block technique demonstrates excellent performance with 100,000bp length of TGS data across all thread sizes. Furthermore, the advantage of dynamic block becomes obvious as the data grows. It can be said that the dynamic block technique is more suitable for longer data. The block size of 32 with a thread size of 32, which is the best setting for 100 and 1,000 bp, becomes the worst setting. It can be concluded that there is no single best setting for all data. Settings need to be adjusted according to changes in data size.
+
+The table \ref{tab:100,000} displays the execution time with 100,000bp read and haplotype in seconds. 100,000bp is the extremely long length of TGS data. The best configuration setting is dynamic block with a thread size 64. Once again, the dynamic block technique demonstrates excellent performance with 100,000bp length of TGS data across all thread sizes. Furthermore, the advantage of dynamic block becomes obvious as the data grows. It can be said that the dynamic block technique is more suitable for longer data. The block size of 32 with a thread size of 32, which is the best setting for 100 and 1,000 bp, becomes the worst setting. It can be concluded that there is no single best setting for all data. Settings need to be adjusted according to changes in data size.
 \begin{table}[h]
     \centering
     \begin{tabular}{|l|c|c|c|c|}
@@ -539,7 +545,7 @@ Based on the benchmark results, the table indicates that GPU-based performance i
     \centering
     \begin{tabular}{|l|c|c|c|c|}
         \hline
-        Length &100& 1000 & 10000 & 10000\\
+        Length &100& 1,000 & 10,000 & 100,000\\
         \hline
         CPU-based & \textbf{7.3ms}& \textbf{70ms}& 96s &7100s\\
         \hline
@@ -578,11 +584,14 @@ For the configuration setting, the experiment reveals that there is no single be
 The results emphasize the importance of considering both computational workload and data transfer overhead when evaluating the performance of GPU-based implementations. For large-scale genomic data, the advantages of parallel computation on GPU surpass the overhead, leading to significant performance improvements. For smaller datasets, optimizing the data transfer process or using hybrid approaches may be necessary to achieve comparable performance gains.
 
 \section{Future Work}
-There are some future improvement we can try. (1) \textbf{Optimized the data transfer}: we can using the shared memory technique make the threads communicate with each other to reduce the frequency of transfer between host and device. Moreover, we can try the strategy of overlapping computation with data transfer to hide the overhead for short sequence size.
-(2) \textbf{Hybrid CPU-GPU implementation}: Develop a hybrid approach that utilizes both CPU and GPU resources. For smaller sequences, computations can be handled by the CPU to avoid data transfer overhead, while longer sequences can be processed on the GPU for utilizing the efficiency of parallel.
+There are some future improvements we can try. 
+
+(1) \textbf{Optimized Data Transfer}: One of the main bottlenecks in GPU-accelerated algorithms is the data transfer between the host (CPU) and the device (GPU). To mitigate this, we can use shared memory techniques to enable threads to communicate with each other, reducing the frequency and volume of data transfers. Additionally, employing strategies such as overlapping computation with data transfer can help hide the overhead, especially for short sequence sizes. This means we can initiate data transfers while computations are still ongoing, thus utilizing the GPU more effectively and reducing idle times.
+
+(2) \textbf{Hybrid CPU-GPU Implementation}: Develop a hybrid approach that utilizes both CPU and GPU resources. For smaller sequences, the computation can be managed by the CPU to minimize data transfer overhead. This is because the cost of transferring data to the GPU might outweigh the benefits of parallel computation for short sequences. Conversely, longer sequences can be processed on the GPU, where the parallel processing capabilities can be fully utilized. By dynamically assigning tasks based on sequence length and complexity, we can achieve an optimal balance between CPU and GPU usage, improving overall efficiency and performance. In addition, developing an adaptive workload distribution algorithm that can dynamically adjust the allocation of tasks based on real-time performance metrics can further enhance the efficiency of this hybrid approach. This will ensure that the computational resources are utilized optimally, leading to faster and more efficient processing of DNA sequences.
 
 \chapter{Conclusion}
-In this paper, we present a GPU-accelerated implementation of the Pair-HMM Forward Algorithm for DNA sequence profile alignment, demonstrating substantial performance improvements over traditional CPU-based methods, particularly for long sequence lengths typical of TGS data. The use of anti-diagonal parallelization, anti-rolling, and dynamic block allocation significantly enhances the efficiency and scalability of the algorithm. However, for short NGS data, our approach suffers from data transfer overhead. We hope that shared memory techniques, overlapping skills, and a hybrid approach could enhance the performance and applicability of the algorithms in the future. Additionally, our approach could serve as a considerable framework for those interested in the same field. They can customize it for their own goals, such as local alignment and gap score applications for the further research.
+In this paper, we present a GPU-accelerated implementation of the Pair-HMM Forward Algorithm for DNA sequence profile alignment, demonstrating substantial performance improvements over traditional CPU-based methods, particularly for long sequence lengths typical of TGS data. The use of anti-diagonal parallelization, anti-diagonal rolling, and dynamic block allocation significantly enhances the efficiency and scalability of the algorithm. However, for short NGS data, our approach suffers from data transfer overhead. We hope that shared memory techniques, overlapping data transfer overhead, and a hybrid approach could enhance the performance and applicability of the algorithms in the future. Additionally, our approach could serve as a considerable framework for those interested in the same field. They can customize it for their own goals, such as local alignment and gap score applications for the further research.
 \newpage
 \AddToContents{Bibliography}
 \printbibliography
