@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - Chunk Processing (100, 1000, 10000, 100000)</title>
+  <title>PairHMM with WebGPU - Shared Memory / Zero-Copy Example</title>
 </head>
 <body>
 <script type="module">
@@ -14,15 +14,15 @@ async function runPairHMM() {
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter.requestDevice();
 
-  // 基本常數定義
-  const STATES = 3;
-  const ALPHABETS = 5;
-  const LOG_ZERO = -1e30; // 使用 f32 的極小值
-
-  // 輔助函式：建立 shader module
+  // 輔助函式：建立 shader module（必須在使用前定義）
   function createShaderModule(code) {
     return device.createShaderModule({ code });
   }
+
+  // 基本常數
+  const STATES = 3;
+  const ALPHABETS = 5;
+  const LOG_ZERO = -1e30; // 使用 f32 的極小值
 
   // -----------------------------------------------------
   // 1. 初始化 Shader：設定 dpBuffer 與 dAns
@@ -42,15 +42,15 @@ async function runPairHMM() {
       let size = params.len + 1u;
       if (idx < size) {
         if (idx == 0u) {
-          dpBuffer[0] = ${LOG_ZERO};                           // prevM[0]
-          dpBuffer[size + 0u] = ${LOG_ZERO};                    // prevI[0]
-          dpBuffer[2u * size + 0u] = log(1.0 / f32(params.len)); // prevD[0]
-          dpBuffer[3u * size + 0u] = ${LOG_ZERO};               // currM[0]
-          dpBuffer[4u * size + 0u] = ${LOG_ZERO};               // currI[0]
-          dpBuffer[5u * size + 0u] = log(1.0 / f32(params.len)); // currD[0]
-          dpBuffer[6u * size + 0u] = ${LOG_ZERO};               // newM[0]
-          dpBuffer[7u * size + 0u] = ${LOG_ZERO};               // newI[0]
-          dpBuffer[8u * size + 0u] = log(1.0 / f32(params.len)); // newD[0]
+          dpBuffer[0] = ${LOG_ZERO};
+          dpBuffer[size + 0u] = ${LOG_ZERO};
+          dpBuffer[2u * size + 0u] = log(1.0 / f32(params.len));
+          dpBuffer[3u * size + 0u] = ${LOG_ZERO};
+          dpBuffer[4u * size + 0u] = ${LOG_ZERO};
+          dpBuffer[5u * size + 0u] = log(1.0 / f32(params.len));
+          dpBuffer[6u * size + 0u] = ${LOG_ZERO};
+          dpBuffer[7u * size + 0u] = ${LOG_ZERO};
+          dpBuffer[8u * size + 0u] = log(1.0 / f32(params.len));
         } else {
           dpBuffer[idx] = ${LOG_ZERO};
           dpBuffer[size + idx] = ${LOG_ZERO};
@@ -75,10 +75,9 @@ async function runPairHMM() {
   });
 
   // -----------------------------------------------------
-  // 2. Diagonal Shader：分塊處理對角線迭代
-  //
-  // 這裡使用新的 uniform 結構 ChunkParams，包含 len, startDiag 與 endDiag。
-  // Shader 內部只處理 diag 在 [startDiag, endDiag] 內的部分。
+  // 2. Diagonal Shader：分塊處理對角線迭代（搭配 Shared Memory / Zero-Copy）
+  // 使用新的 uniform 結構 ChunkParams { len, startDiag, endDiag }，
+  // 只處理 diag 範圍 [startDiag, endDiag]。
   // -----------------------------------------------------
   const diagonalShaderCode = `
     struct ChunkParams { len: u32, startDiag: u32, endDiag: u32 }
@@ -101,16 +100,14 @@ async function runPairHMM() {
     @group(0) @binding(4) var<storage, read_write> dpBuffer : array<f32>;
     @group(0) @binding(5) var<storage, read_write> dAns : array<f32>;
     
-    // workgroup_size 固定為 256
     @compute @workgroup_size(256)
     fn main(@builtin(local_invocation_id) local_id : vec3<u32>) {
       let len = chunkParams.len;
       let size = len + 1u;
       let wgSize = 256u;
       
-      // 處理本次 chunk 中的對角線：diag 從 chunkParams.startDiag 到 chunkParams.endDiag
+      // 處理本次 chunk 中的 diag 範圍
       for (var diag: u32 = chunkParams.startDiag; diag <= chunkParams.endDiag; diag = diag + 1u) {
-        // 每個執行緒依步長 wgSize 處理多個 t 值
         for (var t: u32 = local_id.x; t <= diag; t = t + wgSize) {
           let i = diag - t;
           let j = t;
@@ -124,7 +121,6 @@ async function runPairHMM() {
             
             var logProbabilityM : f32 = ${LOG_ZERO};
             var logProbabilityI : f32 = ${LOG_ZERO};
-            // State M
             for (var a: u32 = 0u; a < 4u; a = a + 1u) {
               let prob = readProbMatrix[(i - 1u) * 4u + a];
               if (prob > 0.0) {
@@ -133,7 +129,6 @@ async function runPairHMM() {
                 logProbabilityM = logSum(logProbabilityM, candidate);
               }
             }
-            // State I (固定使用 hapIndex 為 4)
             for (var a: u32 = 0u; a < 4u; a = a + 1u) {
               let prob = readProbMatrix[(i - 1u) * 4u + a];
               if (prob > 0.0) {
@@ -176,14 +171,13 @@ async function runPairHMM() {
           }
         }
         workgroupBarrier();
-        // 更新 dpBuffer：將 curr 複製到 prev，將 new 複製到 curr
         for (var tid: u32 = local_id.x; tid < size; tid = tid + wgSize) {
-          dpBuffer[tid] = dpBuffer[3u * size + tid];            // prevM = currM
-          dpBuffer[size + tid] = dpBuffer[4u * size + tid];        // prevI = currI
-          dpBuffer[2u * size + tid] = dpBuffer[5u * size + tid];   // prevD = currD
-          dpBuffer[3u * size + tid] = dpBuffer[6u * size + tid];   // currM = newM
-          dpBuffer[4u * size + tid] = dpBuffer[7u * size + tid];   // currI = newI
-          dpBuffer[5u * size + tid] = dpBuffer[8u * size + tid];   // currD = newD
+          dpBuffer[tid] = dpBuffer[3u * size + tid];
+          dpBuffer[size + tid] = dpBuffer[4u * size + tid];
+          dpBuffer[2u * size + tid] = dpBuffer[5u * size + tid];
+          dpBuffer[3u * size + tid] = dpBuffer[6u * size + tid];
+          dpBuffer[4u * size + tid] = dpBuffer[7u * size + tid];
+          dpBuffer[5u * size + tid] = dpBuffer[8u * size + tid];
         }
         workgroupBarrier();
       }
@@ -196,18 +190,24 @@ async function runPairHMM() {
   });
   
   // -----------------------------------------------------
-  // 輔助函式：從 Array 建立 GPU buffer
+  // 輔助函式：從 Array 建立 GPU 緩衝區，使用 SharedArrayBuffer 模擬 zero-copy
   // -----------------------------------------------------
-  function createBuffer(arr, usage) {
+  function createSharedBuffer(typedArray, usage) {
+    const sab = new SharedArrayBuffer(typedArray.byteLength);
+    const sharedArray = new typedArray.constructor(sab);
+    sharedArray.set(typedArray);
     const buffer = device.createBuffer({
-      size: arr.byteLength,
+      size: sab.byteLength,
       usage: usage,
-      mappedAtCreation: true
+      mappedAtCreation: true,
     });
-    const mapping = arr instanceof Float32Array ?
-                    new Float32Array(buffer.getMappedRange()) :
-                    new Uint32Array(buffer.getMappedRange());
-    mapping.set(arr);
+    let mapping;
+    if (typedArray instanceof Float32Array) {
+      mapping = new Float32Array(buffer.getMappedRange());
+    } else {
+      mapping = new Uint32Array(buffer.getMappedRange());
+    }
+    mapping.set(sharedArray);
     buffer.unmap();
     return buffer;
   }
@@ -215,13 +215,18 @@ async function runPairHMM() {
   // -----------------------------------------------------
   // 測試長度：100, 1000, 10000, 100000
   // -----------------------------------------------------
-  const lengths = [100, 1000, 10000, 100000];
-  // 建立 initUniformBuffer (4 bytes) 用於初始化 pass
+  // 建立 initUniformBuffer (4 bytes) 用於 init pass
   let initUniformBuffer = device.createBuffer({
     size: 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+  // 建立 chunkUniformBuffer (12 bytes) 用於 diagonal pass
+  let chunkUniformBuffer = device.createBuffer({
+    size: 12,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
   
+  const lengths = [100, 1000, 10000, 100000];
   for (let len of lengths) {
     console.log(`開始計算長度 ${len}`);
     // 建立 transitionMatrix (3x3)
@@ -232,19 +237,16 @@ async function runPairHMM() {
     ]);
     // 建立 emissionMatrix (3 x 5 x 5)
     const emissionMatrix = new Float32Array(STATES * ALPHABETS * ALPHABETS);
-    // State M
     emissionMatrix[0 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 0] = Math.log(0.9);
     emissionMatrix[0 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 1] = Math.log(0.8);
     emissionMatrix[0 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 2] = Math.log(0.9);
     emissionMatrix[0 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 3] = Math.log(0.7);
     emissionMatrix[0 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = Math.log(0.1);
-    // State I
     emissionMatrix[1 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 4] = Math.log(0.1);
     emissionMatrix[1 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 4] = Math.log(0.1);
     emissionMatrix[1 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 4] = Math.log(0.1);
     emissionMatrix[1 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 4] = Math.log(0.1);
     emissionMatrix[1 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = Math.log(0.6);
-    // State D
     emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 0] = Math.log(0.2);
     emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 1] = Math.log(0.2);
     emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 2] = Math.log(0.2);
@@ -262,11 +264,11 @@ async function runPairHMM() {
       haplotype[i] = 65;
     }
   
-    // 建立各項 GPU buffer
-    const readProbBuffer = createBuffer(readProbMatrix, GPUBufferUsage.STORAGE);
-    const haplotypeBuffer = createBuffer(haplotype, GPUBufferUsage.STORAGE);
-    const emissionBuffer = createBuffer(emissionMatrix, GPUBufferUsage.STORAGE);
-    const transitionBuffer = createBuffer(transitionMatrix, GPUBufferUsage.STORAGE);
+    // 利用 SharedArrayBuffer 建立 GPU buffer
+    const readProbBuffer = createSharedBuffer(readProbMatrix, GPUBufferUsage.STORAGE);
+    const haplotypeBuffer = createSharedBuffer(haplotype, GPUBufferUsage.STORAGE);
+    const emissionBuffer = createSharedBuffer(emissionMatrix, GPUBufferUsage.STORAGE);
+    const transitionBuffer = createSharedBuffer(transitionMatrix, GPUBufferUsage.STORAGE);
   
     // dpBuffer 大小：9 * (len+1) 個 f32
     const dpBufferSize = 9 * (len + 1) * 4;
@@ -281,11 +283,11 @@ async function runPairHMM() {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
   
-    // 建立 initUniformBuffer (僅存放 len, 4 bytes)
+    // 寫入初始化 uniform (len)
     const initUniformData = new Uint32Array([len]);
     device.queue.writeBuffer(initUniformBuffer, 0, initUniformData.buffer);
   
-    // 建立 init pass 的 bind group (bindings: 0: dpBuffer, 1: dAnsBuffer, 2: initUniformBuffer)
+    // 建立 init pass 的 bind group
     const initBindGroup = device.createBindGroup({
       layout: initPipeline.getBindGroupLayout(0),
       entries: [
@@ -295,13 +297,7 @@ async function runPairHMM() {
       ]
     });
   
-    // 建立 chunkUniformBuffer (12 bytes) 用於 diagonal pass
-    let chunkUniformBuffer = device.createBuffer({
-      size: 12,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-  
-    // 建立 diagonal pass 的 bind group (bindings: 0: readProbBuffer, 1: haplotypeBuffer, 2: emissionBuffer, 3: transitionBuffer, 4: dpBuffer, 5: dAnsBuffer, 6: chunkUniformBuffer)
+    // 建立 diagonal pass 的 bind group
     const diagonalBindGroup = device.createBindGroup({
       layout: diagonalPipeline.getBindGroupLayout(0),
       entries: [
@@ -333,12 +329,11 @@ async function runPairHMM() {
     // ---------------------------
     // 分塊 dispatch diagonal pass 並計時
     // ---------------------------
-    const totalDiag = 2 * len; // diag 從 1 到 2*len
-    const chunkSize = 1000;    // 可依需求調整
+    const totalDiag = 2 * len;
+    const chunkSize = (len >= 100000) ? 5000 : 1000;
     const t0 = performance.now();
     for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
       const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
-      // 更新 chunkUniformBuffer 為 { len, startDiag, endDiag }
       const chunkParams = new Uint32Array([len, chunkStart, chunkEnd]);
       device.queue.writeBuffer(chunkUniformBuffer, 0, chunkParams.buffer);
   
@@ -346,7 +341,6 @@ async function runPairHMM() {
       const pass = commandEncoder.beginComputePass();
       pass.setPipeline(diagonalPipeline);
       pass.setBindGroup(0, diagonalBindGroup);
-      // 每次 dispatch 1 個 workgroup
       pass.dispatchWorkgroups(1);
       pass.end();
       device.queue.submit([commandEncoder.finish()]);
