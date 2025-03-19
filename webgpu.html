@@ -365,7 +365,18 @@ async function runPairHMM() {
     readBuffer.unmap();
   
     console.log(`Length: ${len}, Time: ${elapsed.toFixed(3)} sec, Log-Likelihood: ${ans}`);
+    
+    // 釋放本次迴圈所建立的 GPU 資源
+    readProbBuffer.destroy();
+    haplotypeBuffer.destroy();
+    emissionBuffer.destroy();
+    transitionBuffer.destroy();
+    dpBuffer.destroy();
+    dAnsBuffer.destroy();
+    readBuffer.destroy();
   }
+  initUniformBuffer.destroy();
+  chunkUniformBuffer.destroy();
 }
 runPairHMM();
 </script>
