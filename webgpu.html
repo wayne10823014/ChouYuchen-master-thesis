@@ -327,8 +327,7 @@ async function runPairHMM() {
     // 分塊 dispatch diagonal pass 並計時
     // ---------------------------
     const totalDiag = 2 * len; // diag 從 1 到 2*len
-    // 根據 len 動態調整分塊大小（例如 len>=100000 時用 5000，其它用 1000）
-    const chunkSize = (len >= 100000) ? 5000 : 1000;
+    const chunkSize = 3000;
     const t0 = performance.now();
     for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
       const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
