@@ -371,7 +371,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
           const pass = commandEncoder.beginComputePass();
           pass.setPipeline(initPipeline);
           pass.setBindGroup(0, initBindGroup);
-          const workgroups = Math.ceil((len + 1) / 64);
+          const workgroups = Math.ceil((len + 1) / 256);
           pass.dispatchWorkgroups(workgroups);
           pass.end();
         }
@@ -392,7 +392,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(diagPipeline);
             pass.setBindGroup(0, diagBindGroup);
-            const workgroups = Math.ceil(diag / 64);
+            const workgroups = Math.ceil(diag / 256);
             pass.dispatchWorkgroups(workgroups);
             pass.end();
           }
@@ -404,7 +404,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(updatePipeline);
             pass.setBindGroup(0, updateBindGroup);
-            const workgroups = Math.ceil((len + 1) / 64);
+            const workgroups = Math.ceil((len + 1) / 256);
             pass.dispatchWorkgroups(workgroups);
             pass.end();
           }
