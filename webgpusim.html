@@ -54,7 +54,7 @@ struct InitParams { len: u32 };
 @group(0) @binding(0) var<storage, read_write> dpBuffer: array<f32>;
 @group(0) @binding(1) var<storage, read_write> dAns: array<f32>;
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let idx = global_id.x;
   let len = initParams.len;
@@ -123,7 +123,7 @@ fn logSum3(a: f32, b: f32, c: f32) -> f32 {
   return logSum2(logSum2(a, b), c);
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let t = global_id.x;
   let diag = diagParams.diag;
@@ -216,7 +216,7 @@ struct UpdateParams { len: u32 };
 @group(0) @binding(1) var<uniform> updateParams: UpdateParams;
 @group(0) @binding(0) var<storage, read_write> dpBuffer: array<f32>;
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let i = global_id.x;
   let len = updateParams.len;
@@ -371,7 +371,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
           const pass = commandEncoder.beginComputePass();
           pass.setPipeline(initPipeline);
           pass.setBindGroup(0, initBindGroup);
-          const workgroups = Math.ceil((len + 1) / 256);
+          const workgroups = Math.ceil((len + 1) / 64);
           pass.dispatchWorkgroups(workgroups);
           pass.end();
         }
@@ -392,7 +392,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(diagPipeline);
             pass.setBindGroup(0, diagBindGroup);
-            const workgroups = Math.ceil(diag / 256);
+            const workgroups = Math.ceil(diag / 64);
             pass.dispatchWorkgroups(workgroups);
             pass.end();
           }
@@ -404,7 +404,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(updatePipeline);
             pass.setBindGroup(0, updateBindGroup);
-            const workgroups = Math.ceil((len + 1) / 256);
+            const workgroups = Math.ceil((len + 1) / 64);
             pass.dispatchWorkgroups(workgroups);
             pass.end();
           }
