@@ -230,11 +230,8 @@
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       
-      // 建立 chunk uniform buffer (12 bytes) 用於 diagonal pass
-      let chunkUniformBuffer = device.createBuffer({
-        size: 12,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
+      // 建立 chunk uniform buffer (原本僅一個，現在將依據每個 chunk 分別建立)
+      // 此部分會在 diagonal pass 前依據每個 chunk 產生獨立的 uniform buffer
       
       const lengths = [100, 1000, 10000, 100000];
       for (let len of lengths) {
@@ -307,20 +304,6 @@
           ]
         });
       
-        // 建立 diagonal pass 的 bind group
-        const diagonalBindGroup = device.createBindGroup({
-          layout: diagonalPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: readProbBuffer } },
-            { binding: 1, resource: { buffer: haplotypeBuffer } },
-            { binding: 2, resource: { buffer: emissionBuffer } },
-            { binding: 3, resource: { buffer: transitionBuffer } },
-            { binding: 4, resource: { buffer: dpBuffer } },
-            { binding: 5, resource: { buffer: dAnsBuffer } },
-            { binding: 6, resource: { buffer: chunkUniformBuffer } }
-          ]
-        });
-      
         // ---------------------------
         // 執行初始化 pass
         // ---------------------------
@@ -341,21 +324,52 @@
         // ---------------------------
         const totalDiag = 2 * len;
         const chunkSize = 3000;
+        const numChunks = Math.ceil(totalDiag / chunkSize);
         const t0 = performance.now();
-        for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
+        
+        // 為每個 chunk 建立獨立的 uniform buffer，儲存 [len, startDiag, endDiag]
+        const chunkUniformBuffers = [];
+        for (let i = 0; i < numChunks; i++) {
+          const chunkStart = 1 + i * chunkSize;
           const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
           const chunkParams = new Uint32Array([len, chunkStart, chunkEnd]);
-          device.queue.writeBuffer(chunkUniformBuffer, 0, chunkParams.buffer);
-      
-          let commandEncoder = device.createCommandEncoder();
-          const pass = commandEncoder.beginComputePass();
+          const uniformBuf = device.createBuffer({
+            size: 12,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(uniformBuf, 0, chunkParams.buffer);
+          chunkUniformBuffers.push(uniformBuf);
+        }
+        
+        // 為每個 chunk 建立 diagonal pass 的 bind group，並指定各自的 uniform buffer
+        const diagonalBindGroups = [];
+        for (let i = 0; i < numChunks; i++) {
+          const bindGroup = device.createBindGroup({
+            layout: diagonalPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: readProbBuffer } },
+              { binding: 1, resource: { buffer: haplotypeBuffer } },
+              { binding: 2, resource: { buffer: emissionBuffer } },
+              { binding: 3, resource: { buffer: transitionBuffer } },
+              { binding: 4, resource: { buffer: dpBuffer } },
+              { binding: 5, resource: { buffer: dAnsBuffer } },
+              { binding: 6, resource: { buffer: chunkUniformBuffers[i] } }
+            ]
+          });
+          diagonalBindGroups.push(bindGroup);
+        }
+        
+        // 將所有 diagonal pass 記錄在同一個 command encoder 中，一次性提交
+        let diagCommandEncoder = device.createCommandEncoder();
+        for (let i = 0; i < numChunks; i++) {
+          const pass = diagCommandEncoder.beginComputePass();
           pass.setPipeline(diagonalPipeline);
-          pass.setBindGroup(0, diagonalBindGroup);
+          pass.setBindGroup(0, diagonalBindGroups[i]);
           pass.dispatchWorkgroups(1);
           pass.end();
-          device.queue.submit([commandEncoder.finish()]);
-          await device.queue.onSubmittedWorkDone();
         }
+        device.queue.submit([diagCommandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
         const t1 = performance.now();
         const elapsed = (t1 - t0) / 1000;
       
