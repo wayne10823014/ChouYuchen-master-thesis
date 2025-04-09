@@ -230,9 +230,6 @@
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       
-      // 建立 chunk uniform buffer (原本僅一個，現在將依據每個 chunk 分別建立)
-      // 此部分會在 diagonal pass 前依據每個 chunk 產生獨立的 uniform buffer
-      
       const lengths = [100, 1000, 10000, 100000];
       for (let len of lengths) {
         print(`開始計算長度 ${len}`);
@@ -372,6 +369,38 @@
         await device.queue.onSubmittedWorkDone();
         const t1 = performance.now();
         const elapsed = (t1 - t0) / 1000;
+      
+        // ---------------------------
+        // 新增 device-to-device 複製操作：複製 dpBuffer 至 dpBufferCopy
+        // ---------------------------
+        // dpBufferCopy 僅設定 COPY_DST 與 MAP_READ，不包含 COPY_SRC
+        const dpBufferCopy = device.createBuffer({
+          size: dpBufferSize,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+        });
+        let copyCommandEncoder = device.createCommandEncoder();
+        copyCommandEncoder.copyBufferToBuffer(dpBuffer, 0, dpBufferCopy, 0, dpBufferSize);
+        device.queue.submit([copyCommandEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
+      
+        // ---------------------------
+        // 直接 map dpBufferCopy 的部分區域（例如：第四個區塊）以讀取前 10 個 f32 資料
+        // ---------------------------
+        // 原始 offset：第四個區塊起始位址 (單位：位元組)
+        const offsetCurrM = 3 * (len + 1) * 4;
+        // 要讀取的位元組數：10 個 f32 (10 * 4 = 40)
+        const dpReadSize = 10 * 4;
+        // 調整 offset 至 8 位元組對齊
+        const alignedOffset = offsetCurrM - (offsetCurrM % 8);
+        const offsetDelta = offsetCurrM - alignedOffset;
+        const alignedSize = dpReadSize + offsetDelta;
+      
+        await dpBufferCopy.mapAsync(GPUMapMode.READ, alignedOffset, alignedSize);
+        const mappedRange = dpBufferCopy.getMappedRange(alignedOffset, alignedSize);
+        // 建立 Float32Array 時，需跳過偏移量 offsetDelta 的部分
+        const dpValues = new Float32Array(mappedRange, offsetDelta, dpReadSize / 4);
+        print("dpBufferCopy [第四個區塊] 前 10 個數值: " + Array.from(dpValues).join(", "));
+        dpBufferCopy.unmap();
       
         // ---------------------------
         // 從 GPU 讀回 dAns 結果
