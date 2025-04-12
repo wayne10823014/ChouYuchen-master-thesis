@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - 使用 Chunk Size 與三個 dp 緩衝區</title>
+  <title>PairHMM with WebGPU - 使用 Bind Group Pooling 加速</title>
   <style>
     body {
       margin: 0;
@@ -32,7 +32,7 @@
         print("WebGPU 不支援");
         return;
       }
-      // 請求 adapter 與 device（此處若硬體有更高上限，可透過 requiredLimits 指定）
+      // 請求 adapter 與 device
       const adapter = await navigator.gpu.requestAdapter();
       const device = await adapter.requestDevice();
   
@@ -47,45 +47,28 @@
       }
   
       // ---------------------------------------------------------
-      // ※ 本範例中，我們將 dp 狀態分散到三個不同的緩衝區，
-      //     各緩衝區尺寸 = 3*(len+1)*4 bytes，
-      //     分別儲存：
-      //       dp_prev：存放上一列，區段順序：prevM, prevI, prevD
-      //       dp_curr：存放目前列，區段順序：currM, currI, currD
-      //       dp_new  ：存放新計算列，區段順序：newM, newI, newD
-      // dAns 為單一 f32，累計結果
-      // ---------------------------------------------------------
-      // 由 host 端初始化 dp 緩衝區初始值：
-      // 每個 dp 緩衝區內皆為 3*(len+1) 個 f32，預設填滿 LOG_ZERO，
-      // 但 Delete 狀態（第三區段）的 index 0 設為 log(1/len)
-      function createDPInitialData(len) {
-        const size = len + 1;
-        const total = 3 * size;
-        let arr = new Float32Array(total);
-        arr.fill(LOG_ZERO);
-        arr[2 * size + 0] = Math.log(1.0 / len);
-        return arr;
-      }
-      const dAnsInit = new Float32Array([LOG_ZERO]);
+      // 自訂 BindGroupLayout：將 binding 7 設為動態 uniform (hasDynamicOffset)
+      const bindGroupLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+          { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+          { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform", hasDynamicOffset: true } },
+          { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+        ]
+      });
+  
+      const pipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayout]
+      });
   
       // ---------------------------------------------------------
-      // Diagonal Shader
-      // 此 shader 讀取：
-      //   readProbBuffer、haplotypeBuffer、emissionMatrix、transitionMatrix，
-      //   dp_prev（前一列）以及 dp_curr（目前列），
-      // 並根據 uniform {len, diag} 計算當前 diagonal 上每個 cell 的新值，
-      // 寫入 dp_new；當 i == len（右下角）時更新 dAns。
-      // 綁定項目：
-      //  binding 0：readProbBuffer
-      //  binding 1：haplotypeBuffer
-      //  binding 2：emissionMatrix
-      //  binding 3：transitionMatrix
-      //  binding 4：dp_prev (只讀)
-      //  binding 5：dp_curr (只讀)
-      //  binding 6：dAns (讀寫)
-      //  binding 7：diagUniformBuffer (uniform: {len, diag})
-      //  binding 8：dp_new (寫入)
-      // ---------------------------------------------------------
+      // Diagonal Shader 不變
+      // 此 shader 根據 uniform {len, diag} 計算當前 diagonal 上每個 cell 的新值
       const diagonalShaderCode = `
         struct Uniforms { len: u32, diag: u32 };
         @group(0) @binding(0) var<storage, read> readProbMatrix : array<f32>;
@@ -150,7 +133,7 @@
                 }
               }
   
-              // dp_prev 的資料（3 區段：索引 0～size-1: M，size～2*size-1: I，2*size～3*size-1: D）
+              // dp_prev 與 dp_curr 中的資料依區段存放：M、I、D
               let t00 = dp_prev[0 * size + (i - 1u)];
               let t10 = dp_prev[1 * size + (i - 1u)];
               let t20 = dp_prev[2 * size + (i - 1u)];
@@ -158,7 +141,6 @@
                                                      t10 + transitionMatrix[3],
                                                      t20 + transitionMatrix[6]);
   
-              // dp_curr 的資料（同上）
               let t01 = dp_curr[0 * size + (i - 1u)];
               let t11 = dp_curr[1 * size + (i - 1u)];
               let newI = logProbabilityI + logSum2(t01 + transitionMatrix[1],
@@ -169,12 +151,10 @@
               let newD = logSum2(t02 + transitionMatrix[2],
                                  t22 + transitionMatrix[8]);
   
-              // 將新計算結果寫入 dp_new 的各區段（newM、newI、newD）
               dp_new[0 * size + i] = newM;
               dp_new[1 * size + i] = newI;
               dp_new[2 * size + i] = newD;
   
-              // 當 i 等於 len（即到達最右邊界）時更新 dAns
               if (i == len) {
                 dAns[0] = logSum2(dAns[0], logSum2(newM, newI));
               }
@@ -184,13 +164,12 @@
       `;
       const diagonalModule = createShaderModule(diagonalShaderCode);
       const diagonalPipeline = device.createComputePipeline({
-        layout: "auto",
+        layout: pipelineLayout,
         compute: { module: diagonalModule, entryPoint: "main" }
       });
   
       // ---------------------------------------------------------
       // 輔助函式：從 Array 建立 GPU Buffer（mappedAtCreation）
-      // ---------------------------------------------------------
       function createBufferFromArray(arr, usage) {
         const buffer = device.createBuffer({
           size: arr.byteLength,
@@ -204,9 +183,19 @@
       }
   
       // ---------------------------------------------------------
-      // 建立其他所需 Buffer：readProb, haplotype, emissionMatrix, transitionMatrix
-      // ---------------------------------------------------------
+      // 建立其他所需 Buffer：readProb、haplotype、emissionMatrix、transitionMatrix
       const lengths = [100, 1000, 10000, 100000];
+  
+      // 輔助函式：建立 dp 初始值資料
+      function createDPInitialData(len) {
+        const size = len + 1;
+        const total = 3 * size;
+        let arr = new Float32Array(total);
+        arr.fill(LOG_ZERO);
+        arr[2 * size + 0] = Math.log(1.0 / len);
+        return arr;
+      }
+      const dAnsInit = new Float32Array([LOG_ZERO]);
   
       for (let len of lengths) {
         print(`開始計算長度 ${len}`);
@@ -275,53 +264,56 @@
         const dAnsBuffer = createBufferFromArray(dAnsInit, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
   
         // ---------------------------------------------------------
-        // 定義 chunk size（例如，每個 chunk 處理 3000 個對角線 passes）
-        const chunkSize = 4000;
+        // 定義 chunk size（例如，每個 chunk 處理 4000 條對角線 passes）
+        const chunkSize = 10000;
         const totalDiag = 2 * len;
         const t0 = performance.now();
   
-        // 依據 chunkSize 分批執行對角線運算
+        // 將每個 chunk 中的 uniform 資料打包至同一 uniform buffer (每筆 256 bytes, 對齊要求)
         for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
           const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
-          let encoder = device.createCommandEncoder();
+          const numEntries = chunkEnd - chunkStart + 1;
+          const uniformBufferSizePerEntry = 256; // 每筆資料對齊 256 bytes
+          const uniformBufferSize = numEntries * uniformBufferSizePerEntry;
+          // 建立動態 uniform 資料，每筆僅用前 8 bytes（2 個 u32），其餘補 0
+          const uniformData = new Uint32Array(numEntries * (uniformBufferSizePerEntry / 4));
+          for (let i = 0; i < numEntries; i++) {
+            uniformData[i * (uniformBufferSizePerEntry / 4) + 0] = len;
+            uniformData[i * (uniformBufferSizePerEntry / 4) + 1] = chunkStart + i;
+          }
+          const uniformBuffer = device.createBuffer({
+            size: uniformBufferSize,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
   
-          // 於同一個 command encoder 中依序執行此 chunk 內的各個 diagonal pass
+          // 於此 chunk 只建立一次 bind group，動態 offset 待 dispatch 時指定
+          const diagBindGroup = device.createBindGroup({
+            layout: bindGroupLayout,
+            entries: [
+              { binding: 0, resource: { buffer: readProbBuffer } },
+              { binding: 1, resource: { buffer: haplotypeBuffer } },
+              { binding: 2, resource: { buffer: emissionBuffer } },
+              { binding: 3, resource: { buffer: transitionBuffer } },
+              { binding: 4, resource: { buffer: dp_prev } },
+              { binding: 5, resource: { buffer: dp_curr } },
+              { binding: 6, resource: { buffer: dAnsBuffer } },
+              { binding: 7, resource: { buffer: uniformBuffer, size: uniformBufferSizePerEntry } },
+              { binding: 8, resource: { buffer: dp_new } }
+            ]
+          });
+  
+          const encoder = device.createCommandEncoder();
           for (let diag = chunkStart; diag <= chunkEnd; diag++) {
-            // 建立 diag uniform buffer，內容 [len, diag] (2*4 bytes)
-            const diagUniformData = new Uint32Array([len, diag]);
-            const diagUniformBuffer = device.createBuffer({
-              size: 8,
-              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
-            device.queue.writeBuffer(diagUniformBuffer, 0, diagUniformData.buffer);
-  
-            // 建立 diagonal pass 的 bind group
-            const diagBindGroup = device.createBindGroup({
-              layout: diagonalPipeline.getBindGroupLayout(0),
-              entries: [
-                { binding: 0, resource: { buffer: readProbBuffer } },
-                { binding: 1, resource: { buffer: haplotypeBuffer } },
-                { binding: 2, resource: { buffer: emissionBuffer } },
-                { binding: 3, resource: { buffer: transitionBuffer } },
-                { binding: 4, resource: { buffer: dp_prev } },
-                { binding: 5, resource: { buffer: dp_curr } },
-                { binding: 6, resource: { buffer: dAnsBuffer } },
-                { binding: 7, resource: { buffer: diagUniformBuffer } },
-                { binding: 8, resource: { buffer: dp_new } }
-              ]
-            });
-  
-            {
-              const pass = encoder.beginComputePass();
-              pass.setPipeline(diagonalPipeline);
-              pass.setBindGroup(0, diagBindGroup);
-              pass.dispatchWorkgroups(1);
-              pass.end();
-            }
-            // 每次 diagonal pass完成後，依序加入複製命令：
-            // 複製 dp_curr → dp_prev
+            // 計算動態 offset（以 chunk 為單位，offset 必須為 256 bytes 的倍數）
+            const dynamicOffset = (diag - chunkStart) * uniformBufferSizePerEntry;
+            const pass = encoder.beginComputePass();
+            pass.setPipeline(diagonalPipeline);
+            pass.setBindGroup(0, diagBindGroup, [dynamicOffset]);
+            pass.dispatchWorkgroups(1);
+            pass.end();
+            // 每次 diagonal pass 完成後複製 dp_curr → dp_prev，dp_new → dp_curr
             encoder.copyBufferToBuffer(dp_curr, 0, dp_prev, 0, dpTotalBytes);
-            // 複製 dp_new → dp_curr
             encoder.copyBufferToBuffer(dp_new, 0, dp_curr, 0, dpTotalBytes);
           }
           device.queue.submit([encoder.finish()]);
@@ -333,12 +325,11 @@
   
         // ---------------------------------------------------------
         // 讀取 dAns 結果
-        // ---------------------------------------------------------
         const resultBuffer = device.createBuffer({
           size: 4,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
-        let encoder2 = device.createCommandEncoder();
+        const encoder2 = device.createCommandEncoder();
         encoder2.copyBufferToBuffer(dAnsBuffer, 0, resultBuffer, 0, 4);
         device.queue.submit([encoder2.finish()]);
         await resultBuffer.mapAsync(GPUMapMode.READ);
