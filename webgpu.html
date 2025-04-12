@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - 使用 Bind Group Pooling 加速</title>
+  <title>PairHMM with WebGPU - 使用多個 Workgroups 加速 (完整修改後程式碼)</title>
   <style>
     body {
       margin: 0;
@@ -40,6 +40,7 @@
       const STATES = 3;      // 狀態：Match, Insert, Delete
       const ALPHABETS = 5;   // 可見字母數
       const LOG_ZERO = -1e30;
+      const WORKGROUP_SIZE = 256;
   
       // 輔助函式：建立 shader module
       function createShaderModule(code) {
@@ -47,7 +48,7 @@
       }
   
       // ---------------------------------------------------------
-      // 自訂 BindGroupLayout：將 binding 7 設為動態 uniform (hasDynamicOffset)
+      // 修改 BindGroupLayout，移除動態 uniform（hasDynamicOffset）設定
       const bindGroupLayout = device.createBindGroupLayout({
         entries: [
           { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
@@ -57,7 +58,8 @@
           { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-          { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform", hasDynamicOffset: true } },
+          // 修改 binding 7，移除 hasDynamicOffset，並接收統一數據 (Uniforms)
+          { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
           { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
         ]
       });
@@ -67,101 +69,115 @@
       });
   
       // ---------------------------------------------------------
-      // Diagonal Shader 不變
-      // 此 shader 根據 uniform {len, diag} 計算當前 diagonal 上每個 cell 的新值
+      // 修改 Compute Shader：改用多個 Workgroups 並根據 workgroup_id 分區計算
       const diagonalShaderCode = `
-        struct Uniforms { len: u32, diag: u32 };
-        @group(0) @binding(0) var<storage, read> readProbMatrix : array<f32>;
-        @group(0) @binding(1) var<storage, read> haplotype : array<u32>;
-        @group(0) @binding(2) var<storage, read> emissionMatrix : array<f32>;
-        @group(0) @binding(3) var<storage, read> transitionMatrix : array<f32>;
+struct Uniforms {
+  len: u32,
+  diag: u32,
+  numGroups: u32,
+  padding: u32, // 填充至 16 bytes 對齊
+};
+
+@group(0) @binding(0) var<storage, read> readProbMatrix : array<f32>;
+@group(0) @binding(1) var<storage, read> haplotype : array<u32>;
+@group(0) @binding(2) var<storage, read> emissionMatrix : array<f32>;
+@group(0) @binding(3) var<storage, read> transitionMatrix : array<f32>;
+
+@group(0) @binding(4) var<storage, read> dp_prev : array<f32>;
+@group(0) @binding(5) var<storage, read> dp_curr : array<f32>;
+
+@group(0) @binding(6) var<storage, read_write> dAns : array<f32>;
+
+@group(0) @binding(7) var<uniform> u : Uniforms;
+
+@group(0) @binding(8) var<storage, read_write> dp_new : array<f32>;
+
+fn logSum2(a: f32, b: f32) -> f32 {
+  if (a == ${LOG_ZERO}) { return b; }
+  if (b == ${LOG_ZERO}) { return a; }
+  if (a > b) { return a + log(1.0 + exp(b - a)); }
+  return b + log(1.0 + exp(a - b));
+}
+fn logSum3(a: f32, b: f32, c: f32) -> f32 {
+  return logSum2(logSum2(a, b), c);
+}
+
+@compute @workgroup_size(${WORKGROUP_SIZE})
+fn main(@builtin(workgroup_id) wg_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
+  let len = u.len;
+  let diag = u.diag;
+  let totalCells = diag + 1u;
+  let groups = u.numGroups;
+  let groupIndex = wg_id.x;
+
+  // 計算本 workgroup 處理的區間 [start, end)
+  let start = (totalCells * groupIndex) / groups;
+  let end = (totalCells * (groupIndex + 1u)) / groups;
   
-        @group(0) @binding(4) var<storage, read> dp_prev : array<f32>;
-        @group(0) @binding(5) var<storage, read> dp_curr : array<f32>;
+  // 每個工作項目負責處理區間中的多個位置
+  for (var t: u32 = start + local_id.x; t < end; t = t + ${WORKGROUP_SIZE}u) {
+    let i = diag - t;
+    let j = t;
+    if (i >= 1u && i <= len && j >= 1u && j <= len) {
+      // 取得 haplotype 字元並轉換為對應 index
+      let hap_char = haplotype[j - 1u];
+      var hapIndex: u32 = 4u;
+      if (hap_char == 65u) { hapIndex = 0u; }
+      else if (hap_char == 67u) { hapIndex = 1u; }
+      else if (hap_char == 71u) { hapIndex = 2u; }
+      else if (hap_char == 84u) { hapIndex = 3u; }
   
-        @group(0) @binding(6) var<storage, read_write> dAns : array<f32>;
-  
-        @group(0) @binding(7) var<uniform> u : Uniforms;
-  
-        @group(0) @binding(8) var<storage, read_write> dp_new : array<f32>;
-  
-        fn logSum2(a: f32, b: f32) -> f32 {
-          if (a == ${LOG_ZERO}) { return b; }
-          if (b == ${LOG_ZERO}) { return a; }
-          if (a > b) { return a + log(1.0 + exp(b - a)); }
-          return b + log(1.0 + exp(a - b));
+      var logProbabilityM: f32 = ${LOG_ZERO};
+      var logProbabilityI: f32 = ${LOG_ZERO};
+      for (var a: u32 = 0u; a < 4u; a = a + 1u) {
+        let prob = readProbMatrix[(i - 1u) * 4u + a];
+        if (prob > 0.0) {
+          let emiss = emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex];
+          let candidate = log(prob) + emiss;
+          logProbabilityM = logSum2(logProbabilityM, candidate);
         }
-        fn logSum3(a: f32, b: f32, c: f32) -> f32 {
-          return logSum2(logSum2(a, b), c);
+      }
+      for (var a: u32 = 0u; a < 4u; a = a + 1u) {
+        let prob = readProbMatrix[(i - 1u) * 4u + a];
+        if (prob > 0.0) {
+          let emiss = emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u];
+          let candidate = log(prob) + emiss;
+          logProbabilityI = logSum2(logProbabilityI, candidate);
         }
+      }
   
-        @compute @workgroup_size(256)
-        fn main(@builtin(local_invocation_id) local_id : vec3<u32>) {
-          let len = u.len;
-          let size = len + 1u;
-          let diag = u.diag;
-          let wgSize = 256u;
+      // dp_prev 與 dp_curr 中的資料依區段存放：M、I、D
+      let size = len + 1u;
+      let t00 = dp_prev[0u * size + (i - 1u)];
+      let t10 = dp_prev[1u * size + (i - 1u)];
+      let t20 = dp_prev[2u * size + (i - 1u)];
+      let newM = logProbabilityM + logSum3(t00 + transitionMatrix[0],
+                                             t10 + transitionMatrix[3],
+                                             t20 + transitionMatrix[6]);
   
-          for (var t: u32 = local_id.x; t <= diag; t = t + wgSize) {
-            let i = diag - t;
-            let j = t;
-            if (i >= 1u && i <= len && j >= 1u && j <= len) {
-              // 取得 haplotype 字元並轉換為對應 index
-              let hap_char = haplotype[j - 1u];
-              var hapIndex: u32 = 4u;
-              if (hap_char == 65u) { hapIndex = 0u; }
-              else if (hap_char == 67u) { hapIndex = 1u; }
-              else if (hap_char == 71u) { hapIndex = 2u; }
-              else if (hap_char == 84u) { hapIndex = 3u; }
+      let t01 = dp_curr[0u * size + (i - 1u)];
+      let t11 = dp_curr[1u * size + (i - 1u)];
+      let newI = logProbabilityI + logSum2(t01 + transitionMatrix[1],
+                                            t11 + transitionMatrix[4]);
   
-              var logProbabilityM: f32 = ${LOG_ZERO};
-              var logProbabilityI: f32 = ${LOG_ZERO};
-              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-                let prob = readProbMatrix[(i - 1u) * 4u + a];
-                if (prob > 0.0) {
-                  let emiss = emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex];
-                  let candidate = log(prob) + emiss;
-                  logProbabilityM = logSum2(logProbabilityM, candidate);
-                }
-              }
-              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-                let prob = readProbMatrix[(i - 1u) * 4u + a];
-                if (prob > 0.0) {
-                  let emiss = emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u];
-                  let candidate = log(prob) + emiss;
-                  logProbabilityI = logSum2(logProbabilityI, candidate);
-                }
-              }
+      let t02 = dp_curr[0u * size + i];
+      let t22 = dp_curr[2u * size + i];
+      let newD = logSum2(t02 + transitionMatrix[2],
+                         t22 + transitionMatrix[8]);
   
-              // dp_prev 與 dp_curr 中的資料依區段存放：M、I、D
-              let t00 = dp_prev[0 * size + (i - 1u)];
-              let t10 = dp_prev[1 * size + (i - 1u)];
-              let t20 = dp_prev[2 * size + (i - 1u)];
-              let newM = logProbabilityM + logSum3(t00 + transitionMatrix[0],
-                                                     t10 + transitionMatrix[3],
-                                                     t20 + transitionMatrix[6]);
+      dp_new[0u * size + i] = newM;
+      dp_new[1u * size + i] = newI;
+      dp_new[2u * size + i] = newD;
   
-              let t01 = dp_curr[0 * size + (i - 1u)];
-              let t11 = dp_curr[1 * size + (i - 1u)];
-              let newI = logProbabilityI + logSum2(t01 + transitionMatrix[1],
-                                                    t11 + transitionMatrix[4]);
+      if (i == len) {
+        // 本儲存格負責累加答案
+        dAns[0] = logSum2(dAns[0], logSum2(newM, newI));
+      }
+    }
+  }
+}
+`;
   
-              let t02 = dp_curr[0 * size + i];
-              let t22 = dp_curr[2 * size + i];
-              let newD = logSum2(t02 + transitionMatrix[2],
-                                 t22 + transitionMatrix[8]);
-  
-              dp_new[0 * size + i] = newM;
-              dp_new[1 * size + i] = newI;
-              dp_new[2 * size + i] = newD;
-  
-              if (i == len) {
-                dAns[0] = logSum2(dAns[0], logSum2(newM, newI));
-              }
-            }
-          }
-        }
-      `;
       const diagonalModule = createShaderModule(diagonalShaderCode);
       const diagonalPipeline = device.createComputePipeline({
         layout: pipelineLayout,
@@ -264,8 +280,8 @@
         const dAnsBuffer = createBufferFromArray(dAnsInit, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
   
         // ---------------------------------------------------------
-        // 定義 chunk size（例如，每個 chunk 處理 10000 條對角線 passes）
-        const chunkSize = 10000;
+        // 定義 chunk size（例如，每個 chunk 處理 200000 條對角線 passes）
+        const chunkSize = 200000;
         const totalDiag = 2 * len;
         const t0 = performance.now();
   
@@ -273,46 +289,40 @@
         const globalEncoder = device.createCommandEncoder();
         for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
           const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
-          const numEntries = chunkEnd - chunkStart + 1;
-          const uniformBufferSizePerEntry = 256; // 每筆資料對齊 256 bytes
-          const uniformBufferSize = numEntries * uniformBufferSizePerEntry;
-          // 建立動態 uniform 資料，每筆僅用前 8 bytes（2 個 u32），其餘補 0
-          const uniformData = new Uint32Array(numEntries * (uniformBufferSizePerEntry / 4));
-          for (let i = 0; i < numEntries; i++) {
-            uniformData[i * (uniformBufferSizePerEntry / 4) + 0] = len;
-            uniformData[i * (uniformBufferSizePerEntry / 4) + 1] = chunkStart + i;
-          }
-          const uniformBuffer = device.createBuffer({
-            size: uniformBufferSize,
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          });
-          device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
-  
-          // 為此 chunk 建立一次性的 bind group
-          const diagBindGroup = device.createBindGroup({
-            layout: bindGroupLayout,
-            entries: [
-              { binding: 0, resource: { buffer: readProbBuffer } },
-              { binding: 1, resource: { buffer: haplotypeBuffer } },
-              { binding: 2, resource: { buffer: emissionBuffer } },
-              { binding: 3, resource: { buffer: transitionBuffer } },
-              { binding: 4, resource: { buffer: dp_prev } },
-              { binding: 5, resource: { buffer: dp_curr } },
-              { binding: 6, resource: { buffer: dAnsBuffer } },
-              { binding: 7, resource: { buffer: uniformBuffer, size: uniformBufferSizePerEntry } },
-              { binding: 8, resource: { buffer: dp_new } }
-            ]
-          });
-  
-          // 將此 chunk 的所有 diagonal passes 指令都記錄到同一個 globalEncoder 上
           for (let diag = chunkStart; diag <= chunkEnd; diag++) {
-            // 計算動態 offset（以 chunk 為單位，offset 必須為 256 bytes 的倍數）
-            const dynamicOffset = (diag - chunkStart) * uniformBufferSizePerEntry;
+            // 為每一個 diagonal pass 計算適合的 Workgroup 數量：每個 Workgroup 預設最多處理 ${WORKGROUP_SIZE} 個 cell
+            let totalCells = diag + 1;
+            let numGroups = Math.ceil(totalCells / WORKGROUP_SIZE);
+            // 建立 Uniform 資料：包含 len, diag, numGroups, 以及 padding (共 16 bytes)
+            const uniformData = new Uint32Array([len, diag, numGroups, 0]);
+            const uniformBuffer = device.createBuffer({
+              size: 16,
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
+  
+            // 為此 diagonal pass 建立 bind group
+            const diagBindGroup = device.createBindGroup({
+              layout: bindGroupLayout,
+              entries: [
+                { binding: 0, resource: { buffer: readProbBuffer } },
+                { binding: 1, resource: { buffer: haplotypeBuffer } },
+                { binding: 2, resource: { buffer: emissionBuffer } },
+                { binding: 3, resource: { buffer: transitionBuffer } },
+                { binding: 4, resource: { buffer: dp_prev } },
+                { binding: 5, resource: { buffer: dp_curr } },
+                { binding: 6, resource: { buffer: dAnsBuffer } },
+                { binding: 7, resource: { buffer: uniformBuffer } },
+                { binding: 8, resource: { buffer: dp_new } }
+              ]
+            });
+  
             const pass = globalEncoder.beginComputePass();
             pass.setPipeline(diagonalPipeline);
-            pass.setBindGroup(0, diagBindGroup, [dynamicOffset]);
-            pass.dispatchWorkgroups(1);
+            pass.setBindGroup(0, diagBindGroup);
+            pass.dispatchWorkgroups(numGroups);
             pass.end();
+  
             // 每次 diagonal pass 完成後複製 dp_curr → dp_prev，以及 dp_new → dp_curr
             globalEncoder.copyBufferToBuffer(dp_curr, 0, dp_prev, 0, dpTotalBytes);
             globalEncoder.copyBufferToBuffer(dp_new, 0, dp_curr, 0, dpTotalBytes);
