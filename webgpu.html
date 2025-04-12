@@ -264,12 +264,13 @@
         const dAnsBuffer = createBufferFromArray(dAnsInit, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
   
         // ---------------------------------------------------------
-        // 定義 chunk size（例如，每個 chunk 處理 4000 條對角線 passes）
+        // 定義 chunk size（例如，每個 chunk 處理 10000 條對角線 passes）
         const chunkSize = 10000;
         const totalDiag = 2 * len;
         const t0 = performance.now();
   
-        // 將每個 chunk 中的 uniform 資料打包至同一 uniform buffer (每筆 256 bytes, 對齊要求)
+        // 建立一個全域 command encoder，將所有 diagonal passes 一次性記錄
+        const globalEncoder = device.createCommandEncoder();
         for (let chunkStart = 1; chunkStart <= totalDiag; chunkStart += chunkSize) {
           const chunkEnd = Math.min(chunkStart + chunkSize - 1, totalDiag);
           const numEntries = chunkEnd - chunkStart + 1;
@@ -287,7 +288,7 @@
           });
           device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
   
-          // 於此 chunk 只建立一次 bind group，動態 offset 待 dispatch 時指定
+          // 為此 chunk 建立一次性的 bind group
           const diagBindGroup = device.createBindGroup({
             layout: bindGroupLayout,
             entries: [
@@ -303,22 +304,23 @@
             ]
           });
   
-          const encoder = device.createCommandEncoder();
+          // 將此 chunk 的所有 diagonal passes 指令都記錄到同一個 globalEncoder 上
           for (let diag = chunkStart; diag <= chunkEnd; diag++) {
             // 計算動態 offset（以 chunk 為單位，offset 必須為 256 bytes 的倍數）
             const dynamicOffset = (diag - chunkStart) * uniformBufferSizePerEntry;
-            const pass = encoder.beginComputePass();
+            const pass = globalEncoder.beginComputePass();
             pass.setPipeline(diagonalPipeline);
             pass.setBindGroup(0, diagBindGroup, [dynamicOffset]);
             pass.dispatchWorkgroups(1);
             pass.end();
-            // 每次 diagonal pass 完成後複製 dp_curr → dp_prev，dp_new → dp_curr
-            encoder.copyBufferToBuffer(dp_curr, 0, dp_prev, 0, dpTotalBytes);
-            encoder.copyBufferToBuffer(dp_new, 0, dp_curr, 0, dpTotalBytes);
+            // 每次 diagonal pass 完成後複製 dp_curr → dp_prev，以及 dp_new → dp_curr
+            globalEncoder.copyBufferToBuffer(dp_curr, 0, dp_prev, 0, dpTotalBytes);
+            globalEncoder.copyBufferToBuffer(dp_new, 0, dp_curr, 0, dpTotalBytes);
           }
-          device.queue.submit([encoder.finish()]);
-          await device.queue.onSubmittedWorkDone();
         }
+        // 一次性送出全部 command encoder 指令
+        device.queue.submit([globalEncoder.finish()]);
+        await device.queue.onSubmittedWorkDone();
   
         const t1 = performance.now();
         const elapsed = (t1 - t0) / 1000;
