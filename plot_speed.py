@@ -21,7 +21,7 @@ x = list(range(len(lengths)))
 plt.figure(figsize=(10, 6))
 
 # 繪製各版本的 Speedup 折線圖
-plt.plot(x, speedup_cuda, marker='o', linestyle='-', label='CUDA')
+# plt.plot(x, speedup_cuda, marker='o', linestyle='-', label='CUDA')
 plt.plot(x, speedup_cpu, marker='s', linestyle='-', label='CPU')
 plt.plot(x, speedup_webgpu_basic, marker='^', linestyle='-', label='WebGPU Basic Version')
 plt.plot(x, speedup_webgpu_optimized, marker='d', linestyle='-', label='WebGPU Optimized Version')
@@ -44,8 +44,8 @@ def annotate_points(x_vals, y_vals):
         plt.text(x_vals[i], s + offset, f"{s:.2f}", ha='center', va='bottom', fontsize=9)
 
 # 分別為各條折線圖的資料點標示加速倍率
-annotate_points(x, speedup_cuda)
-# annotate_points(x, speedup_cpu)
+# annotate_points(x, speedup_cuda)
+annotate_points(x, speedup_cpu)
 annotate_points(x, speedup_webgpu_basic)
 annotate_points(x, speedup_webgpu_optimized)
 
