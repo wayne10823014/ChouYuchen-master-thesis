@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - 基線版本</title>
+  <title>PairHMM with WebGPU - 基線版本（加上均勻負載分配功能）</title>
   <style>
     body {
       margin: 0;
@@ -39,6 +39,7 @@
       const STATES = 3;
       const ALPHABETS = 5;
       const LOG_ZERO = -1e30;
+      const WORKGROUP_SIZE = 256;
 
       // 輔助函式：建立 shader module
       function createShaderModule(code) {
@@ -93,12 +94,15 @@
       });
 
       // -----------------------------------------------------
-      // 2. Diagonal Kernel：計算單條對角線上每個元素
-      //    此處改用 global_invocation_id 覆蓋所有任務，
-      //    並根據 diag (對角線編號) 決定任務數為 diag+1
+      // 2. Diagonal Kernel：計算單條對角線上每個元素（加入均勻負載分配功能）
       // -----------------------------------------------------
       const diagonalShaderCode = `
-        struct DiagParams { len: u32, diag: u32 }
+        struct DiagParams { 
+          len: u32, 
+          diag: u32, 
+          numGroups: u32, 
+          padding: u32 
+        };
         @group(0) @binding(6) var<uniform> diagParams: DiagParams;
 
         fn logSum(logA: f32, logB: f32) -> f32 {
@@ -118,73 +122,78 @@
         @group(0) @binding(4) var<storage, read_write> dpBuffer : array<f32>;
         @group(0) @binding(5) var<storage, read_write> dAns : array<f32>;
 
-        @compute @workgroup_size(256)
-        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+        @compute @workgroup_size(${WORKGROUP_SIZE})
+        fn main(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) local_id: vec3<u32>) {
           let diag = diagParams.diag;
           let len = diagParams.len;
-          let index = global_id.x; // 全域索引用來處理對角線上 index (0 ~ diag)
-          if (index > diag) {
-            return;
-          }
-          let i = diag - index;
-          let j = index;
-          if (i >= 1u && i <= len && j >= 1u && j <= len) {
-            let hap_char = haplotype[j - 1u];
-            var hapIndex: u32 = 4u;
-            if (hap_char == 65u) { hapIndex = 0u; }
-            else if (hap_char == 67u) { hapIndex = 1u; }
-            else if (hap_char == 71u) { hapIndex = 2u; }
-            else if (hap_char == 84u) { hapIndex = 3u; }
+          let totalCells = diag + 1u;
+          let groups = diagParams.numGroups;
+          let groupIndex = wg_id.x;
+          let start = (totalCells * groupIndex) / groups;
+          let end = (totalCells * (groupIndex + 1u)) / groups;
+          for (var t: u32 = start + local_id.x; t < end; t = t + ${WORKGROUP_SIZE}u) {
+            let index = t;
+            if (index > diag) { continue; }
+            let i = diag - index;
+            let j = index;
+            if (i >= 1u && i <= len && j >= 1u && j <= len) {
+              let hap_char = haplotype[j - 1u];
+              var hapIndex: u32 = 4u;
+              if (hap_char == 65u) { hapIndex = 0u; }
+              else if (hap_char == 67u) { hapIndex = 1u; }
+              else if (hap_char == 71u) { hapIndex = 2u; }
+              else if (hap_char == 84u) { hapIndex = 3u; }
 
-            var logProbabilityM: f32 = ${LOG_ZERO};
-            var logProbabilityI: f32 = ${LOG_ZERO};
-            for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-              let prob = readProbMatrix[(i - 1u) * 4u + a];
-              if (prob > 0.0) {
-                let emiss = emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex];
-                let candidate = log(prob) + emiss;
-                logProbabilityM = logSum(logProbabilityM, candidate);
+              var logProbabilityM: f32 = ${LOG_ZERO};
+              var logProbabilityI: f32 = ${LOG_ZERO};
+              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
+                let prob = readProbMatrix[(i - 1u) * 4u + a];
+                if (prob > 0.0) {
+                  let emiss = emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex];
+                  let candidate = log(prob) + emiss;
+                  logProbabilityM = logSum(logProbabilityM, candidate);
+                }
               }
-            }
-            for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-              let prob = readProbMatrix[(i - 1u) * 4u + a];
-              if (prob > 0.0) {
-                let emiss = emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u];
-                let candidate = log(prob) + emiss;
-                logProbabilityI = logSum(logProbabilityI, candidate);
+              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
+                let prob = readProbMatrix[(i - 1u) * 4u + a];
+                if (prob > 0.0) {
+                  let emiss = emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u];
+                  let candidate = log(prob) + emiss;
+                  logProbabilityI = logSum(logProbabilityI, candidate);
+                }
               }
-            }
+              
+              let size = len + 1u;
+              let offset_prevM = 0u;
+              let offset_prevI = size;
+              let offset_prevD = 2u * size;
+              let offset_currM = 3u * size;
+              let offset_currI = 4u * size;
+              let offset_currD = 5u * size;
+              let offset_newM = 6u * size;
+              let offset_newI = 7u * size;
+              let offset_newD = 8u * size;
 
-            let size = len + 1u;
-            let offset_prevM = 0u;
-            let offset_prevI = size;
-            let offset_prevD = 2u * size;
-            let offset_currM = 3u * size;
-            let offset_currI = 4u * size;
-            let offset_currD = 5u * size;
-            let offset_newM = 6u * size;
-            let offset_newI = 7u * size;
-            let offset_newD = 8u * size;
+              let t00 = dpBuffer[offset_prevM + (i - 1u)] + transitionMatrix[0];
+              let t10 = dpBuffer[offset_prevI + (i - 1u)] + transitionMatrix[3];
+              let t20 = dpBuffer[offset_prevD + (i - 1u)] + transitionMatrix[6];
+              let newm = logProbabilityM + logSum(logSum(t00, t10), t20);
 
-            let t00 = dpBuffer[offset_prevM + (i - 1u)] + transitionMatrix[0];
-            let t10 = dpBuffer[offset_prevI + (i - 1u)] + transitionMatrix[3];
-            let t20 = dpBuffer[offset_prevD + (i - 1u)] + transitionMatrix[6];
-            let newm = logProbabilityM + logSum(logSum(t00, t10), t20);
+              let t01 = dpBuffer[offset_currM + (i - 1u)] + transitionMatrix[1];
+              let t11 = dpBuffer[offset_currI + (i - 1u)] + transitionMatrix[4];
+              let newi = logProbabilityI + logSum(t01, t11);
 
-            let t01 = dpBuffer[offset_currM + (i - 1u)] + transitionMatrix[1];
-            let t11 = dpBuffer[offset_currI + (i - 1u)] + transitionMatrix[4];
-            let newi = logProbabilityI + logSum(t01, t11);
+              let t02 = dpBuffer[offset_currM + i] + transitionMatrix[2];
+              let t22 = dpBuffer[offset_currD + i] + transitionMatrix[8];
+              let newd = logSum(t02, t22);
 
-            let t02 = dpBuffer[offset_currM + i] + transitionMatrix[2];
-            let t22 = dpBuffer[offset_currD + i] + transitionMatrix[8];
-            let newd = logSum(t02, t22);
+              dpBuffer[offset_newM + i] = newm;
+              dpBuffer[offset_newI + i] = newi;
+              dpBuffer[offset_newD + i] = newd;
 
-            dpBuffer[offset_newM + i] = newm;
-            dpBuffer[offset_newI + i] = newi;
-            dpBuffer[offset_newD + i] = newd;
-
-            if (i == len) {
-              dAns[0] = logSum(dAns[0], logSum(newm, newi));
+              if (i == len) {
+                dAns[0] = logSum(dAns[0], logSum(newm, newi));
+              }
             }
           }
         }
@@ -227,9 +236,9 @@
       // -----------------------------------------------------
       // 4. 建立各項 Uniform 與資料 Buffer
       // -----------------------------------------------------
-      // diagUniformBuffer 用來傳送 diagParams (len 與 diag)
+      // diagUniformBuffer 用來傳送 diagParams (len, diag, numGroups, padding)
       let diagUniformBuffer = device.createBuffer({
-        size: 8,
+        size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       // initUniformBuffer 用於初始化以及後續的 update （此 buffer 內存放 len）
@@ -349,29 +358,26 @@
           layout: updatePipeline.getBindGroupLayout(0),
           entries: [
             { binding: 0, resource: { buffer: dpBuffer } },
-            { binding: 1, resource: { buffer: initUniformBuffer } } // 此 buffer 內存放 len
+            { binding: 1, resource: { buffer: initUniformBuffer } }
           ]
         });
 
         // ---------------------------
         // 依序處理每條對角線：
-        // 先 dispatch diagonalKernel (根據 diag+1 任務數計算需要的 workgroup 數量)，
-        // 再 dispatch updateKernel 進行狀態更新（利用 kernel launch 的全域同步）
         // ---------------------------
         const totalDiag = 2 * len;
         const t0 = performance.now();
         for (let diag = 1; diag <= totalDiag; diag++) {
-          const diagParams = new Uint32Array([len, diag]);
+          const totalCells = diag + 1;
+          const numGroups = Math.ceil(totalCells / WORKGROUP_SIZE);
+          const diagParams = new Uint32Array([len, diag, numGroups, 0]);
           device.queue.writeBuffer(diagUniformBuffer, 0, diagParams.buffer);
 
           let commandEncoder = device.createCommandEncoder();
           const pass = commandEncoder.beginComputePass();
           pass.setPipeline(diagonalPipeline);
           pass.setBindGroup(0, diagonalBindGroup);
-          const numTasks = diag + 1; // 對角線上任務數量
-          const workgroupSize = 256;
-          const numWorkgroups = Math.ceil(numTasks / workgroupSize);
-          pass.dispatchWorkgroups(numWorkgroups);
+          pass.dispatchWorkgroups(numGroups);
           pass.end();
           device.queue.submit([commandEncoder.finish()]);
           await device.queue.onSubmittedWorkDone();
