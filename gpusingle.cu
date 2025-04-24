@@ -167,7 +167,7 @@ void initializeEmissionMatrix(std::vector<float> &emissionMatrix) {
 }
 
 int main() {
-    std::vector<int> lengths = {100, 1000, 10000, 100000};
+    std::vector<int> lengths = {100, 1000, 10000, 100000, 1000000};
     std::vector<float> transitionMatrix, emissionMatrix;
     initializeTransitionMatrix(transitionMatrix);
     initializeEmissionMatrix(emissionMatrix);
