@@ -2,18 +2,20 @@
 #include <vector>
 #include <cmath>
 #include <chrono>
+#include <algorithm>        // 為了 std::min
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-const int STATES = 3; // 隱藏狀態數：Match (M), Insert (I), Delete (D)
-const int ALPHABETS = 5; // 可見字母數：A, C, G, T, -
+const int STATES    = 3;    // 隱藏狀態數：Match (M), Insert (I), Delete (D)
+const int ALPHABETS = 5;    // 可見字母數：A, C, G, T, -
+#define LOG_ZERO -1e30f     // 表示 log(0) 的非常小值
 
-#define LOG_ZERO -1e30f // 表示 log(0) 的一個非常小的值
-
-__host__ int min(int a, int b, int c) {
+// 三數最小值
+__host__ int min3(int a, int b, int c) {
     return std::min(std::min(a, b), c);
 }
 
+// 安全版 log-sum
 __device__ __host__ float logSum(float logA, float logB) {
     if (logA == LOG_ZERO) return logB;
     if (logB == LOG_ZERO) return logA;
@@ -24,47 +26,69 @@ __device__ __host__ float logSum(float logA, float logB) {
     }
 }
 
-__device__ float weightedEmissionProbabilityLog(const float *readProb, int hapIndex, const float *emissionMatrix, int state) {
-    float logProbability = LOG_ZERO;
+// 計算 weighted emission probability (log)
+__device__ float weightedEmissionProbabilityLog(
+    const float *readProb, int hapIndex,
+    const float *emissionMatrix, int state
+) {
+    float logProb = LOG_ZERO;
     for (int i = 0; i < 4; ++i) {
         if (readProb[i] > 0) {
-            logProbability = logSum(logProbability, logf(readProb[i]) + emissionMatrix[state * ALPHABETS * ALPHABETS + i * ALPHABETS + hapIndex]);
+            logProb = logSum(
+                logProb,
+                logf(readProb[i]) +
+                    emissionMatrix[state * ALPHABETS * ALPHABETS
+                                 + i * ALPHABETS + hapIndex]
+            );
         }
     }
-    return logProbability;
+    return logProb;
 }
 
-__global__ void pairHMMForwardKernel(const float *readProbMatrix, const char *haplotype, const float *emissionMatrix,
-                                     const float *transitionMatrix, float *prevM, float *prevI, float *prevD, 
-                                     float *currM, float *currI, float *currD, float *newM, float *newI, float *newD, 
-                                     int len, int diag, float *dAns ){                                    
-
+// 核心 Kernel：對角線計算
+__global__ void pairHMMForwardKernel(
+    const float *readProbMatrix,
+    const char  *haplotype,
+    const float *emissionMatrix,
+    const float *transitionMatrix,
+    float *prevM, float *prevI, float *prevD,
+    float *currM, float *currI, float *currD,
+    float *newM,  float *newI,  float *newD,
+    int len, int diag, float *dAns
+) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
-
     while (idx <= diag) {
         int i = diag - idx;
         int j = idx;
-
         if (i > 0 && i <= len && j > 0 && j <= len) {
-            int hapIndex = (haplotype[j - 1] == 'A') ? 0 :
-                           (haplotype[j - 1] == 'C') ? 1 :
-                           (haplotype[j - 1] == 'G') ? 2 :
-                           (haplotype[j - 1] == 'T') ? 3 : 4;
+            int hapIndex =
+                (haplotype[j - 1] == 'A') ? 0 :
+                (haplotype[j - 1] == 'C') ? 1 :
+                (haplotype[j - 1] == 'G') ? 2 :
+                (haplotype[j - 1] == 'T') ? 3 : 4;
 
-            float logEmissM = weightedEmissionProbabilityLog(&readProbMatrix[(i - 1) * 4], hapIndex, emissionMatrix, 0);
-            float logEmissI = weightedEmissionProbabilityLog(&readProbMatrix[(i - 1) * 4], 4, emissionMatrix, 1);
+            float logEmissM = weightedEmissionProbabilityLog(
+                &readProbMatrix[(i - 1) * 4], hapIndex, emissionMatrix, 0);
+            float logEmissI = weightedEmissionProbabilityLog(
+                &readProbMatrix[(i - 1) * 4], 4, emissionMatrix, 1);
 
             __syncthreads();
 
-            float newm = logEmissM + logSum(logSum(prevM[(i - 1)] + transitionMatrix[0 * STATES + 0],
-                                                    prevI[(i - 1)] + transitionMatrix[1 * STATES + 0]),
-                                             prevD[(i - 1)] + transitionMatrix[2 * STATES + 0]);
+            float newm = logEmissM + logSum(
+                logSum(prevM[i - 1] + transitionMatrix[0 * STATES + 0],
+                       prevI[i - 1] + transitionMatrix[1 * STATES + 0]),
+                prevD[i - 1] + transitionMatrix[2 * STATES + 0]
+            );
 
-            float newi = logEmissI + logSum(currM[(i - 1)] + transitionMatrix[0 * STATES + 1],
-                                             currI[(i - 1)] + transitionMatrix[1 * STATES + 1]);
+            float newi = logEmissI + logSum(
+                currM[i - 1] + transitionMatrix[0 * STATES + 1],
+                currI[i - 1] + transitionMatrix[1 * STATES + 1]
+            );
 
-            float newd = logSum(currM[i] + transitionMatrix[0 * STATES + 2],
-                                             currD[i] + transitionMatrix[2 * STATES + 2]);
+            float newd = logSum(
+                currM[i] + transitionMatrix[0 * STATES + 2],
+                currD[i] + transitionMatrix[2 * STATES + 2]
+            );
 
             __syncthreads();
 
@@ -76,182 +100,175 @@ __global__ void pairHMMForwardKernel(const float *readProbMatrix, const char *ha
                 *dAns = logSum(*dAns, logSum(newm, newi));
             }
         }
-
         idx += blockDim.x * gridDim.x;
     }
 }
 
-void initializeEmissionMatrix(std::vector<float> &emissionMatrix) {
-    emissionMatrix.resize(STATES * ALPHABETS * ALPHABETS);
-
-    emissionMatrix[0 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 0] = logf(0.9f);  // M 發出 'A' -> 'A'
-    emissionMatrix[0 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 1] = logf(0.8f);  // M 發出 'C' -> 'C'
-    emissionMatrix[0 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 2] = logf(0.9f);  // M 發出 'G' -> 'G'
-    emissionMatrix[0 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 3] = logf(0.7f);  // M 發出 'T' -> 'T'
-    emissionMatrix[0 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = logf(0.1f);  // M 發出 '-' -> '-'
-
-    emissionMatrix[1 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 4] = logf(0.1f);  // I 發出 'A' -> '-'
-    emissionMatrix[1 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 4] = logf(0.1f);  // I 發出 'C' -> '-'
-    emissionMatrix[1 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 4] = logf(0.1f);  // I 發出 'G' -> '-'
-    emissionMatrix[1 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 4] = logf(0.1f);  // I 發出 'T' -> '-'
-    emissionMatrix[1 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = logf(0.6f);  // I 發出 '-' -> '-'
-
-    emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 0] = logf(0.2f);  // D 發出 '-' -> 'A'
-    emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 1] = logf(0.2f);  // D 發出 '-' -> 'C'
-    emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 2] = logf(0.2f);  // D 發出 '-' -> 'G'
-    emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 3] = logf(0.2f);  // D 發出 '-' -> 'T'
-    emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = logf(0.2f);  // D 發出 '-' -> '-'
-}
-
-void initializeTransitionMatrix(std::vector<float> &transitionMatrix) {
-    transitionMatrix.resize(STATES * STATES);
-
-    transitionMatrix[0 * STATES + 0] = logf(0.9f);  // M -> M
-    transitionMatrix[0 * STATES + 1] = logf(0.1f);  // M -> I
-    transitionMatrix[0 * STATES + 2] = LOG_ZERO;     // M -> D
-
-    transitionMatrix[1 * STATES + 0] = logf(0.1f);  // I -> M
-    transitionMatrix[1 * STATES + 1] = logf(0.8f);  // I -> I
-    transitionMatrix[1 * STATES + 2] = logf(0.1f);  // I -> D
-
-    transitionMatrix[2 * STATES + 0] = logf(0.1f);  // D -> M
-    transitionMatrix[2 * STATES + 1] = LOG_ZERO;     // D -> I
-    transitionMatrix[2 * STATES + 2] = logf(0.9f);  // D -> D
-}
-
-__global__ void initializeDPKernel(float* dpM1, float* dpI1, float* dpD1, float* dpM2, float* dpI2, float* dpD2,
-        float* dpM3, float* dpI3, float* dpD3, int len) {
+// 初始化 DP buffers
+__global__ void initializeDPKernel(
+    float* dpM1, float* dpI1, float* dpD1,
+    float* dpM2, float* dpI2, float* dpD2,
+    float* dpM3, float* dpI3, float* dpD3,
+    int len
+) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int totalSize = (len + 1);
-    
-    if (idx < totalSize) {
-        if (idx == 0) {
-            dpM1[idx] = LOG_ZERO;
-            dpI1[idx] = LOG_ZERO;
-            dpD1[idx] = logf(1.0f / len);
-            dpM2[idx] = LOG_ZERO;
-            dpI2[idx] = LOG_ZERO;
-            dpD2[idx] = logf(1.0f / len);
-            dpM3[idx] = LOG_ZERO;
-            dpI3[idx] = LOG_ZERO;
-            dpD3[idx] = logf(1.0f / len);
-        } else {
-            dpM1[idx] = LOG_ZERO;
-            dpI1[idx] = LOG_ZERO;
-            dpD1[idx] = LOG_ZERO;
-            dpM2[idx] = LOG_ZERO;
-            dpI2[idx] = LOG_ZERO;
-            dpD2[idx] = LOG_ZERO;
-            dpM3[idx] = LOG_ZERO;
-            dpI3[idx] = LOG_ZERO;
-            dpD3[idx] = LOG_ZERO;
-        }
+    if (idx > len) return;
+    if (idx == 0) {
+        dpM1[0] = LOG_ZERO; dpI1[0] = LOG_ZERO; dpD1[0] = logf(1.0f / len);
+        dpM2[0] = LOG_ZERO; dpI2[0] = LOG_ZERO; dpD2[0] = logf(1.0f / len);
+        dpM3[0] = LOG_ZERO; dpI3[0] = LOG_ZERO; dpD3[0] = logf(1.0f / len);
+    } else {
+        dpM1[idx] = dpI1[idx] = dpD1[idx] =
+        dpM2[idx] = dpI2[idx] = dpD2[idx] =
+        dpM3[idx] = dpI3[idx] = dpD3[idx] = LOG_ZERO;
     }
 }
 
+// 初始化答案
 __global__ void initializeAnsKernel(float* dAns) {
     *dAns = LOG_ZERO;
 }
 
+// 產生 transition matrix
+void initializeTransitionMatrix(std::vector<float> &transitionMatrix) {
+    transitionMatrix.resize(STATES * STATES);
+    transitionMatrix[0*STATES+0] = logf(0.9f);
+    transitionMatrix[0*STATES+1] = logf(0.1f);
+    transitionMatrix[0*STATES+2] = LOG_ZERO;
+    transitionMatrix[1*STATES+0] = logf(0.1f);
+    transitionMatrix[1*STATES+1] = logf(0.8f);
+    transitionMatrix[1*STATES+2] = logf(0.1f);
+    transitionMatrix[2*STATES+0] = logf(0.1f);
+    transitionMatrix[2*STATES+1] = LOG_ZERO;
+    transitionMatrix[2*STATES+2] = logf(0.9f);
+}
+
+// 產生 emission matrix
+void initializeEmissionMatrix(std::vector<float> &emissionMatrix) {
+    emissionMatrix.resize(STATES * ALPHABETS * ALPHABETS);
+    // M
+    emissionMatrix[0*ALPHABETS*ALPHABETS + 0*ALPHABETS + 0] = logf(0.9f);
+    emissionMatrix[0*ALPHABETS*ALPHABETS + 1*ALPHABETS + 1] = logf(0.8f);
+    emissionMatrix[0*ALPHABETS*ALPHABETS + 2*ALPHABETS + 2] = logf(0.9f);
+    emissionMatrix[0*ALPHABETS*ALPHABETS + 3*ALPHABETS + 3] = logf(0.7f);
+    emissionMatrix[0*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = logf(0.1f);
+    // I
+    emissionMatrix[1*ALPHABETS*ALPHABETS + 0*ALPHABETS + 4] = logf(0.1f);
+    emissionMatrix[1*ALPHABETS*ALPHABETS + 1*ALPHABETS + 4] = logf(0.1f);
+    emissionMatrix[1*ALPHABETS*ALPHABETS + 2*ALPHABETS + 4] = logf(0.1f);
+    emissionMatrix[1*ALPHABETS*ALPHABETS + 3*ALPHABETS + 4] = logf(0.1f);
+    emissionMatrix[1*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = logf(0.6f);
+    // D
+    emissionMatrix[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 0] = logf(0.2f);
+    emissionMatrix[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 1] = logf(0.2f);
+    emissionMatrix[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 2] = logf(0.2f);
+    emissionMatrix[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 3] = logf(0.2f);
+    emissionMatrix[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = logf(0.2f);
+}
 
 int main() {
-    std::vector<int> lengths = {100, 1000, 10000, 100000};  // 測試不同長度
-
-    std::vector<float> transitionMatrix;
+    std::vector<int> lengths = {100, 1000, 10000, 100000};
+    std::vector<float> transitionMatrix, emissionMatrix;
     initializeTransitionMatrix(transitionMatrix);
-    std::vector<float> emissionMatrix;
     initializeEmissionMatrix(emissionMatrix);
 
     for (int len : lengths) {
-        // 建立一個 read probability matrix，簡單起見均分機率
-        std::vector<std::vector<float>> readProbMatrix(len, std::vector<float>(4, 0.25f));
-        std::string haplotype(len, 'A');  // 簡單使用全 'A' 的 haplotype
-        
-        // 在裝置端配置記憶體
-        float *d_readProbMatrix, *d_emissionMatrix, *d_transitionMatrix, *d_prevM, *d_prevI, *d_prevD,
-              *d_currM, *d_currI, *d_currD, *d_newM, *d_newI, *d_newD, *d_ans;
-        char *d_haplotype;
-        cudaMalloc((void**)&d_readProbMatrix, len * 4 * sizeof(float));
-        cudaMalloc((void**)&d_emissionMatrix, STATES * ALPHABETS * ALPHABETS * sizeof(float));
-        cudaMalloc((void**)&d_transitionMatrix, STATES * STATES * sizeof(float));
-        cudaMalloc((void**)&d_prevM, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_prevI, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_prevD, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_currM, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_currI, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_currD, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_newM, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_newI, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_newD, (len + 1) * sizeof(float));
-        cudaMalloc((void**)&d_haplotype, len * sizeof(char));
-        cudaMalloc((void**)&d_ans, sizeof(float));
+        // 準備 host 資料
+        std::vector<std::vector<float>> readProb(len, std::vector<float>(4, 0.25f));
+        std::string hap(len, 'A');
 
-        // 將 readProbMatrix 攤平成一維陣列以便複製到裝置端
-        std::vector<float> flatReadProbMatrix(len * 4);
-        for (int i = 0; i < len; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                flatReadProbMatrix[i * 4 + j] = readProbMatrix[i][j];
-            }
-        }
-        cudaMemcpy(d_readProbMatrix, flatReadProbMatrix.data(), len * 4 * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_emissionMatrix, emissionMatrix.data(), STATES * ALPHABETS * ALPHABETS * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_transitionMatrix, transitionMatrix.data(), STATES * STATES * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_haplotype, haplotype.c_str(), len * sizeof(char), cudaMemcpyHostToDevice);
-        
-        // 將答案初始化為 LOG_ZERO
-        initializeAnsKernel<<<1, 1>>>(d_ans);
-  
-        // 初始化 dp 矩陣
-        int totalSize = (len + 1);
-        int threadsPerBlock = 128;
-        int blocksPerGrid = (totalSize + threadsPerBlock - 1) / threadsPerBlock;
-        initializeDPKernel<<<blocksPerGrid, threadsPerBlock>>>(d_prevM, d_prevI, d_prevD, d_currM, d_currI, d_currD, d_newM, d_newI, d_newD, len);
-       
+        // GPU 記憶體配置
+        float *d_read, *d_emit, *d_trans;
+        float *d_prevM, *d_prevI, *d_prevD;
+        float *d_currM, *d_currI, *d_currD;
+        float *d_newM,  *d_newI,  *d_newD;
+        float *d_ans;
+        char  *d_hap;
+        size_t szF = len * 4 * sizeof(float);
+        size_t szV = (len + 1) * sizeof(float);
+
+        cudaMalloc(&d_read, szF);
+        cudaMalloc(&d_emit, STATES * ALPHABETS * ALPHABETS * sizeof(float));
+        cudaMalloc(&d_trans, STATES * STATES * sizeof(float));
+
+        cudaMalloc(&d_prevM, szV); cudaMalloc(&d_prevI, szV); cudaMalloc(&d_prevD, szV);
+        cudaMalloc(&d_currM, szV); cudaMalloc(&d_currI, szV); cudaMalloc(&d_currD, szV);
+        cudaMalloc(&d_newM,  szV); cudaMalloc(&d_newI,  szV); cudaMalloc(&d_newD,  szV);
+
+        cudaMalloc(&d_hap, len * sizeof(char));
+        cudaMalloc(&d_ans, sizeof(float));
+
+        // 複製 host→device
+        std::vector<float> flat(len * 4);
+        for (int i = 0; i < len; ++i)
+            for (int j = 0; j < 4; ++j)
+                flat[i * 4 + j] = readProb[i][j];
+
+        cudaMemcpy(d_read, flat.data(), szF, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_emit, emissionMatrix.data(),
+                   STATES * ALPHABETS * ALPHABETS * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_trans, transitionMatrix.data(),
+                   STATES * STATES * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_hap, hap.c_str(), len * sizeof(char), cudaMemcpyHostToDevice);
+
+        // 初始化 d_ans、DP arrays
+        initializeAnsKernel<<<1,1>>>(d_ans);
+        int threads = 128, blocks = (len + 1 + threads - 1) / threads;
+        initializeDPKernel<<<blocks, threads>>>(
+            d_prevM, d_prevI, d_prevD,
+            d_currM, d_currI, d_currD,
+            d_newM,  d_newI,  d_newD,
+            len
+        );
         cudaDeviceSynchronize();
 
-        // 設定主要核函式的線程參數
-        int diagThreadsPerBlock = 64;
-
-        // 依照對角線逐步執行核函式
-        auto start = std::chrono::high_resolution_clock::now();
+        // 逐對角線計算
+        auto t0 = std::chrono::high_resolution_clock::now();
+        int diagThreads = 64;
         for (int diag = 1; diag <= 2 * len; ++diag) {
-            int elementsInDiag = diag;
-            int diagBlocksPerGrid = (elementsInDiag + diagThreadsPerBlock - 1) / diagThreadsPerBlock;
-            pairHMMForwardKernel<<<diagBlocksPerGrid, diagThreadsPerBlock>>>(d_readProbMatrix, d_haplotype, d_emissionMatrix,
-                                                                             d_transitionMatrix, d_prevM, d_prevI, d_prevD, d_currM, 
-                                                                             d_currI, d_currD, d_newM, d_newI, d_newD, len, diag, d_ans);
+            int elems      = diag;
+            int diagBlocks = (elems + diagThreads - 1) / diagThreads;
+            pairHMMForwardKernel<<<diagBlocks, diagThreads>>>(
+                d_read, d_hap, d_emit, d_trans,
+                d_prevM, d_prevI, d_prevD,
+                d_currM, d_currI, d_currD,
+                d_newM,  d_newI,  d_newD,
+                len, diag, d_ans
+            );
             cudaDeviceSynchronize();
 
-            cudaMemcpy(d_prevM, d_currM, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-            cudaMemcpy(d_prevI, d_currI, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-            cudaMemcpy(d_prevD, d_currD, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-            cudaMemcpy(d_currM, d_newM, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-            cudaMemcpy(d_currI, d_newI, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-            cudaMemcpy(d_currD, d_newD, (len + 1) * sizeof(float), cudaMemcpyDeviceToDevice);
-        }
+            // ==== 四行指標輪替 ====
+            float* tmpM = d_prevM;
+            d_prevM = d_currM;
+            d_currM = d_newM;
+            d_newM  = tmpM;
 
+            float* tmpI = d_prevI;
+            d_prevI = d_currI;
+            d_currI = d_newI;
+            d_newI  = tmpI;
+
+            float* tmpD = d_prevD;
+            d_prevD = d_currD;
+            d_currD = d_newD;
+            d_newD  = tmpD;
+        }
+        auto t1 = std::chrono::high_resolution_clock::now();
+
+        // 拷貝結果回主機並輸出
         float ans;
         cudaMemcpy(&ans, d_ans, sizeof(float), cudaMemcpyDeviceToHost);
+        std::chrono::duration<float> dt = t1 - t0;
+        std::cout << "Length: " << len
+                  << ", Time: " << dt.count()
+                  << " seconds, Log-Likelihood: " << ans << std::endl;
 
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float> duration = end - start;
-        std::cout << "Length: " << len << ", Time: " << duration.count() << " seconds, Log-Likelihood: " << ans << std::endl;
-
-        // 釋放裝置端記憶體
-        cudaFree(d_readProbMatrix);
-        cudaFree(d_emissionMatrix);
-        cudaFree(d_transitionMatrix);
-        cudaFree(d_prevM);
-        cudaFree(d_prevI);
-        cudaFree(d_prevD);
-        cudaFree(d_currM);
-        cudaFree(d_currI);
-        cudaFree(d_currD);
-        cudaFree(d_newM);
-        cudaFree(d_newI);
-        cudaFree(d_newD);
-        cudaFree(d_haplotype);
-        cudaFree(d_ans);
+        // 釋放資源
+        cudaFree(d_read);   cudaFree(d_emit);  cudaFree(d_trans);
+        cudaFree(d_prevM);  cudaFree(d_prevI); cudaFree(d_prevD);
+        cudaFree(d_currM);  cudaFree(d_currI); cudaFree(d_currD);
+        cudaFree(d_newM);   cudaFree(d_newI);  cudaFree(d_newD);
+        cudaFree(d_hap);    cudaFree(d_ans);
     }
 
     return 0;
