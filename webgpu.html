@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - 使用多個 Workgroups 加速 (Device‑to‑Device 版)</title>
+  <title>PairHMM with WebGPU - 使用多個 Workgroups 加速 (移除 ping-pong Buffer)</title>
   <style>
     body {
       margin: 0;
@@ -18,12 +18,15 @@
   </style>
 </head>
 <body>
+  <!-- 輸出結果區域 -->
   <div id="output"></div>
   <script type="module">
+    // 輸出訊息函式
     function print(msg) {
-      document.getElementById("output").innerText += msg + "\n";
+      const outputDiv = document.getElementById("output");
+      outputDiv.innerText += msg + "\n";
     }
-
+  
     async function runPairHMM() {
       if (!navigator.gpu) {
         print("WebGPU 不支援");
@@ -31,251 +34,184 @@
       }
       const adapter = await navigator.gpu.requestAdapter();
       const device = await adapter.requestDevice();
-
+  
       const STATES = 3;
       const ALPHABETS = 5;
       const LOG_ZERO = -1e30;
       const WORKGROUP_SIZE = 256;
-
+  
       function createShaderModule(code) {
         return device.createShaderModule({ code });
       }
-
+  
       const bindGroupLayout = device.createBindGroupLayout({
         entries: [
-          // 0-3: 唯讀 Storage
           { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-          // 4-5: dp_prev, dp_curr 也是唯讀 Storage
           { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
           { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-          // 6: dAns 可讀寫 Storage
           { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-          // 7: Uniform
           { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-          // 8: dp_new 可讀寫 Storage
           { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
         ]
       });
-
-      const pipelineLayout = device.createPipelineLayout({
-        bindGroupLayouts: [bindGroupLayout]
-      });
-
+  
+      const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+  
       const diagonalShaderCode = `
-struct Uniforms {
-  len: u32,
-  diag: u32,
-  numGroups: u32,
-  padding: u32,
-};
-
+struct Uniforms { len: u32, diag: u32, numGroups: u32, padding: u32 };
 @group(0) @binding(0) var<storage, read> readProbMatrix : array<f32>;
-@group(0) @binding(1) var<storage, read> haplotype : array<u32>;
+@group(0) @binding(1) var<storage, read> haplotype      : array<u32>;
 @group(0) @binding(2) var<storage, read> emissionMatrix : array<f32>;
-@group(0) @binding(3) var<storage, read> transitionMatrix : array<f32>;
-
-@group(0) @binding(4) var<storage, read> dp_prev : array<f32>;
-@group(0) @binding(5) var<storage, read> dp_curr : array<f32>;
-
-@group(0) @binding(6) var<storage, read_write> dAns : array<f32>;
+@group(0) @binding(3) var<storage, read> transitionMatrix: array<f32>;
+@group(0) @binding(4) var<storage, read> dp_prev        : array<f32>;
+@group(0) @binding(5) var<storage, read> dp_curr        : array<f32>;
+@group(0) @binding(6) var<storage, read_write> dAns     : array<f32>;
 @group(0) @binding(7) var<uniform> u : Uniforms;
-@group(0) @binding(8) var<storage, read_write> dp_new : array<f32>;
-
-fn logSum2(a: f32, b: f32) -> f32 {
-  if (a == ${LOG_ZERO}) { return b; }
-  if (b == ${LOG_ZERO}) { return a; }
-  if (a > b) { return a + log(1.0 + exp(b - a)); }
-  return b + log(1.0 + exp(a - b));
-}
-fn logSum3(a: f32, b: f32, c: f32) -> f32 {
-  return logSum2(logSum2(a, b), c);
-}
-
+@group(0) @binding(8) var<storage, read_write> dp_new   : array<f32>;
+fn logSum2(a: f32, b: f32) -> f32 { if (a == ${LOG_ZERO}) { return b; } if (b == ${LOG_ZERO}) { return a; } if (a > b) { return a + log(1.0 + exp(b - a)); } return b + log(1.0 + exp(a - b)); }
+fn logSum3(a: f32, b: f32, c: f32) -> f32 { return logSum2(logSum2(a,b), c); }
 @compute @workgroup_size(${WORKGROUP_SIZE})
-fn main(@builtin(workgroup_id) wg_id : vec3<u32>,
-        @builtin(local_invocation_id) local_id : vec3<u32>) {
+fn main(@builtin(workgroup_id) wg_id : vec3<u32>, @builtin(local_invocation_id) local_id : vec3<u32>) {
   let len = u.len;
   let diag = u.diag;
-  let total = diag + 1u;
+  let totalCells = diag + 1u;
   let groups = u.numGroups;
-  let idx = wg_id.x;
-  let start = (total * idx) / groups;
-  let end   = (total * (idx + 1u)) / groups;
-
-  for (var t = start + local_id.x; t < end; t += ${WORKGROUP_SIZE}u) {
+  let groupIndex = wg_id.x;
+  let start = (totalCells * groupIndex) / groups;
+  let end = (totalCells * (groupIndex + 1u)) / groups;
+  for (var t: u32 = start + local_id.x; t < end; t = t + ${WORKGROUP_SIZE}u) {
     let i = diag - t;
     let j = t;
     if (i >= 1u && i <= len && j >= 1u && j <= len) {
+      let hap_char = haplotype[j - 1u];
+      var hapIndex: u32 = 4u;
+      if (hap_char == 65u) { hapIndex = 0u; } else if (hap_char == 67u) { hapIndex = 1u; } else if (hap_char == 71u) { hapIndex = 2u; } else if (hap_char == 84u) { hapIndex = 3u; }
       var logM: f32 = ${LOG_ZERO};
+      for (var a: u32 = 0u; a < 4u; a++) {
+        let prob = readProbMatrix[(i - 1u) * 4u + a];
+        if (prob > 0.0) {
+          logM = logSum2(logM, log(prob) + emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex]);
+        }
+      }
       var logI: f32 = ${LOG_ZERO};
-      let hap = haplotype[j - 1u];
-      var hidx: u32 = 4u;
-      if (hap == 65u) { hidx = 0u; }
-      else if (hap == 67u) { hidx = 1u; }
-      else if (hap == 71u) { hidx = 2u; }
-      else if (hap == 84u) { hidx = 3u; }
-
-      for (var a = 0u; a < 4u; a++) {
-        let p = readProbMatrix[(i - 1u)*4u + a];
-        if (p > 0.0) {
-          let e = emissionMatrix[0u*${ALPHABETS}u*${ALPHABETS}u + a*${ALPHABETS}u + hidx];
-          logM = logSum2(logM, log(p) + e);
+      for (var a: u32 = 0u; a < 4u; a++) {
+        let prob = readProbMatrix[(i - 1u) * 4u + a];
+        if (prob > 0.0) {
+          logI = logSum2(logI, log(prob) + emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u]);
         }
       }
-      for (var a = 0u; a < 4u; a++) {
-        let p = readProbMatrix[(i - 1u)*4u + a];
-        if (p > 0.0) {
-          let e = emissionMatrix[1u*${ALPHABETS}u*${ALPHABETS}u + a*${ALPHABETS}u + 4u];
-          logI = logSum2(logI, log(p) + e);
-        }
-      }
-
       let size = len + 1u;
-      let t00 = dp_prev[0u*size + i - 1u];
-      let t10 = dp_prev[1u*size + i - 1u];
-      let t20 = dp_prev[2u*size + i - 1u];
-      let newM = logM + logSum3(t00 + transitionMatrix[0],
-                                 t10 + transitionMatrix[3],
-                                 t20 + transitionMatrix[6]);
-
-      let t01 = dp_curr[0u*size + i - 1u];
-      let t11 = dp_curr[1u*size + i - 1u];
-      let newI = logI + logSum2(t01 + transitionMatrix[1],
-                                 t11 + transitionMatrix[4]);
-
-      let t02 = dp_curr[0u*size + i];
-      let t22 = dp_curr[2u*size + i];
-      let newD = logSum2(t02 + transitionMatrix[2],
-                         t22 + transitionMatrix[8]);
-
-      dp_new[0u*size + i] = newM;
-      dp_new[1u*size + i] = newI;
-      dp_new[2u*size + i] = newD;
-
-      if (i == len) {
-        dAns[0] = logSum2(dAns[0], logSum2(newM, newI));
-      }
+      let t00 = dp_prev[0u * size + (i - 1u)];
+      let t10 = dp_prev[1u * size + (i - 1u)];
+      let t20 = dp_prev[2u * size + (i - 1u)];
+      let newM = logM + logSum3(t00 + transitionMatrix[0], t10 + transitionMatrix[3], t20 + transitionMatrix[6]);
+      let t01 = dp_curr[0u * size + (i - 1u)];
+      let t11 = dp_curr[1u * size + (i - 1u)];
+      let newI = logI + logSum2(t01 + transitionMatrix[1], t11 + transitionMatrix[4]);
+      let t02 = dp_curr[0u * size + i];
+      let t22 = dp_curr[2u * size + i];
+      let newD = logSum2(t02 + transitionMatrix[2], t22 + transitionMatrix[8]);
+      dp_new[0u * size + i] = newM;
+      dp_new[1u * size + i] = newI;
+      dp_new[2u * size + i] = newD;
+      if (i == len) { dAns[0] = logSum2(dAns[0], logSum2(newM,newI)); }
     }
   }
 }
 `;
-
-      const diagonalModule = createShaderModule(diagonalShaderCode);
-      const diagonalPipeline = device.createComputePipeline({
-        layout: pipelineLayout,
-        compute: { module: diagonalModule, entryPoint: "main" }
-      });
-
-      function createBuffer(arr, usage) {
-        const buf = device.createBuffer({
-          size: arr.byteLength,
-          usage,
-          mappedAtCreation: true
-        });
-        new arr.constructor(buf.getMappedRange()).set(arr);
+      
+      const module = createShaderModule(diagonalShaderCode);
+      const pipeline = device.createComputePipeline({ layout: pipelineLayout, compute: { module, entryPoint: "main" } });
+  
+      function createBufferFromArray(arr, usage) {
+        const buf = device.createBuffer({ size: arr.byteLength, usage, mappedAtCreation: true });
+        new (arr instanceof Uint32Array ? Uint32Array : Float32Array)(buf.getMappedRange()).set(arr);
         buf.unmap();
         return buf;
       }
 
-      function initDP(len) {
-        const sz = len + 1;
-        const total = STATES * sz;
-        const a = new Float32Array(total).fill(LOG_ZERO);
-        a[(STATES-1)*sz] = Math.log(1/len);
-        return a;
+      function createDPData(len) {
+        const size = len + 1;
+        const total = 3 * size;
+        const arr = new Float32Array(total).fill(LOG_ZERO);
+        arr[2 * size + 0] = Math.log(1.0 / len);
+        return arr;
       }
-
       const dAnsInit = new Float32Array([LOG_ZERO]);
-      const lengths = [100, 1000, 10000, 100000];
+      const lengths = [100,1000,10000,100000];
 
-      for (let len of lengths) {
+      for (const len of lengths) {
         print(`開始計算長度 ${len}`);
-        const sz = len + 1;
-        const dpBytes = STATES * sz * 4;
+        const transition = new Float32Array([Math.log(0.9),Math.log(0.1),LOG_ZERO,Math.log(0.1),Math.log(0.8),Math.log(0.1),Math.log(0.1),LOG_ZERO,Math.log(0.9)]);
+        const emiss = new Float32Array(STATES * ALPHABETS * ALPHABETS);
+        emiss[0*ALPHABETS*ALPHABETS+0*ALPHABETS+0]=Math.log(0.9);
+        emiss[0*ALPHABETS*ALPHABETS+1*ALPHABETS+1]=Math.log(0.8);
+        emiss[0*ALPHABETS*ALPHABETS+2*ALPHABETS+2]=Math.log(0.9);
+        emiss[0*ALPHABETS*ALPHABETS+3*ALPHABETS+3]=Math.log(0.7);
+        emiss[0*ALPHABETS*ALPHABETS+4*ALPHABETS+4]=Math.log(0.1);
+        emiss[1*ALPHABETS*ALPHABETS+0*ALPHABETS+4]=Math.log(0.1);
+        emiss[1*ALPHABETS*ALPHABETS+1*ALPHABETS+4]=Math.log(0.1);
+        emiss[1*ALPHABETS*ALPHABETS+2*ALPHABETS+4]=Math.log(0.1);
+        emiss[1*ALPHABETS*ALPHABETS+3*ALPHABETS+4]=Math.log(0.1);
+        emiss[1*ALPHABETS*ALPHABETS+4*ALPHABETS+4]=Math.log(0.6);
+        emiss[2*ALPHABETS*ALPHABETS+4*ALPHABETS+0]=Math.log(0.2);
+        emiss[2*ALPHABETS*ALPHABETS+4*ALPHABETS+1]=Math.log(0.2);
+        emiss[2*ALPHABETS*ALPHABETS+4*ALPHABETS+2]=Math.log(0.2);
+        emiss[2*ALPHABETS*ALPHABETS+4*ALPHABETS+3]=Math.log(0.2);
+        emiss[2*ALPHABETS*ALPHABETS+4*ALPHABETS+4]=Math.log(0.2);
 
-        // 準備各矩陣與 buffer
-        const trans = new Float32Array([
-          Math.log(0.9), Math.log(0.1), LOG_ZERO,
-          Math.log(0.1), Math.log(0.8), Math.log(0.1),
-          Math.log(0.1), LOG_ZERO,       Math.log(0.9)
-        ]);
-        const emi = new Float32Array(STATES*ALPHABETS*ALPHABETS);
-        emi[0*25+0*5+0]=Math.log(0.9); emi[0*25+1*5+1]=Math.log(0.8);
-        emi[0*25+2*5+2]=Math.log(0.9); emi[0*25+3*5+3]=Math.log(0.7);
-        emi[0*25+4*5+4]=Math.log(0.1);
-        emi[1*25+0*5+4]=Math.log(0.1); emi[1*25+1*5+4]=Math.log(0.1);
-        emi[1*25+2*5+4]=Math.log(0.1); emi[1*25+3*5+4]=Math.log(0.1);
-        emi[1*25+4*5+4]=Math.log(0.6);
-        for (let i=0;i<4;i++) emi[2*25+4*5+i]=Math.log(0.2);
-        emi[2*25+4*5+4]=Math.log(0.2);
+        const readp = new Float32Array(len*4).fill(0.25);
+        const hap = new Uint32Array(len).fill(65);
 
-        const readProb = new Float32Array(len*4).fill(0.25);
-        const haplo    = new Uint32Array(len).fill(65);
+        const readBuf = createBufferFromArray(readp, GPUBufferUsage.STORAGE);
+        const hapBuf = createBufferFromArray(hap, GPUBufferUsage.STORAGE);
+        const emissBuf = createBufferFromArray(emiss, GPUBufferUsage.STORAGE);
+        const transBuf = createBufferFromArray(transition, GPUBufferUsage.STORAGE);
 
-        const readProbBuf  = createBuffer(readProb, GPUBufferUsage.STORAGE);
-        const haploBuf     = createBuffer(haplo, GPUBufferUsage.STORAGE);
-        const emiBuf       = createBuffer(emi,    GPUBufferUsage.STORAGE);
-        const transBuf     = createBuffer(trans,  GPUBufferUsage.STORAGE);
+        let dpPrev = createBufferFromArray(createDPData(len), GPUBufferUsage.STORAGE);
+        let dpCurr = createBufferFromArray(createDPData(len), GPUBufferUsage.STORAGE);
+        let dpNew  = createBufferFromArray(createDPData(len), GPUBufferUsage.STORAGE);
+        const dAnsBuf = createBufferFromArray(dAnsInit, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
 
-        const dp_prevBuf = createBuffer(initDP(len),
-          GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST);
-        const dp_currBuf = createBuffer(initDP(len),
-          GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST);
-        const dp_newBuf  = createBuffer(initDP(len),
-          GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST);
-
-        const dAnsBuf = createBuffer(dAnsInit,
-          GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST);
-
-        const totalDiag = 2*len;
-        const t0 = performance.now();
         const encoder = device.createCommandEncoder();
+        const t0 = performance.now();
+        const totalDiag = 2 * len;
+        for (let diag = 1; diag <= totalDiag; diag++) {
+          const totalCells = diag + 1;
+          const groups = Math.ceil(totalCells / WORKGROUP_SIZE);
+          const uniData = new Uint32Array([len,diag,groups,0]);
+          const uniBuf = device.createBuffer({ size:16,usage:GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          device.queue.writeBuffer(uniBuf,0,uniData.buffer);
 
-        for (let diag=1; diag<=totalDiag; diag++) {
-          const cells = diag+1;
-          const groups = Math.ceil(cells/WORKGROUP_SIZE);
-          const uni = new Uint32Array([len, diag, groups, 0]);
-          const uniBuf = device.createBuffer({
-            size:16, usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST
-          });
-          device.queue.writeBuffer(uniBuf,0,uni);
-
-          const bg = device.createBindGroup({
-            layout: bindGroupLayout,
-            entries: [
-              {binding:0,resource:{buffer:readProbBuf}},
-              {binding:1,resource:{buffer:haploBuf}},
-              {binding:2,resource:{buffer:emiBuf}},
-              {binding:3,resource:{buffer:transBuf}},
-              {binding:4,resource:{buffer:dp_prevBuf}},
-              {binding:5,resource:{buffer:dp_currBuf}},
-              {binding:6,resource:{buffer:dAnsBuf}},
-              {binding:7,resource:{buffer:uniBuf}},
-              {binding:8,resource:{buffer:dp_newBuf}},
-            ]
-          });
+          const bg = device.createBindGroup({ layout:bindGroupLayout, entries:[
+            {binding:0,resource:{buffer:readBuf}},
+            {binding:1,resource:{buffer:hapBuf}},
+            {binding:2,resource:{buffer:emissBuf}},
+            {binding:3,resource:{buffer:transBuf}},
+            {binding:4,resource:{buffer:dpPrev}},
+            {binding:5,resource:{buffer:dpCurr}},
+            {binding:6,resource:{buffer:dAnsBuf}},
+            {binding:7,resource:{buffer:uniBuf}},
+            {binding:8,resource:{buffer:dpNew}}
+          ]});
 
           const pass = encoder.beginComputePass();
-          pass.setPipeline(diagonalPipeline);
+          pass.setPipeline(pipeline);
           pass.setBindGroup(0,bg);
           pass.dispatchWorkgroups(groups);
           pass.end();
 
-          // Device‑to‑Device 複製
-          encoder.copyBufferToBuffer(dp_currBuf,0,dp_prevBuf,0,dpBytes);
-          encoder.copyBufferToBuffer(dp_newBuf, 0,dp_currBuf,0,dpBytes);
+          [dpPrev,dpCurr,dpNew] = [dpCurr,dpNew,dpPrev];
         }
-
         device.queue.submit([encoder.finish()]);
         await device.queue.onSubmittedWorkDone();
         const t1 = performance.now();
+        const time = ((t1-t0)/1000).toFixed(3);
 
-        const resBuf = device.createBuffer({
-          size:4, usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ
-        });
+        const resBuf = device.createBuffer({ size:4, usage:GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         const enc2 = device.createCommandEncoder();
         enc2.copyBufferToBuffer(dAnsBuf,0,resBuf,0,4);
         device.queue.submit([enc2.finish()]);
@@ -283,10 +219,9 @@ fn main(@builtin(workgroup_id) wg_id : vec3<u32>,
         const ans = new Float32Array(resBuf.getMappedRange())[0];
         resBuf.unmap();
 
-        print(`長度: ${len}, 耗時: ${((t1-t0)/1000).toFixed(3)} 秒, Log-Likelihood: ${ans}`);
+        print(`長度: ${len}, 耗時: ${time} 秒, Log-Likelihood: ${ans}`);
       }
     }
-
     runPairHMM();
   </script>
 </body>
