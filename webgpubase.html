@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8">
-  <title>PairHMM with WebGPU - 基線版本（加上均勻負載分配功能）</title>
+  <title>PairHMM with WebGPU - 基線版本（JavaScript 指標交換）</title>
   <style>
     body {
       margin: 0;
@@ -18,404 +18,231 @@
   </style>
 </head>
 <body>
-  <!-- 輸出結果區域 -->
   <div id="output"></div>
   <script type="module">
-    // 輸出訊息到畫面上
-    function print(message) {
-      const outputDiv = document.getElementById("output");
-      outputDiv.innerText += message + "\n";
+    function print(msg) {
+      document.getElementById("output").innerText += msg + "\n";
     }
 
     async function runPairHMM() {
-      if (!navigator.gpu) {
-        print("WebGPU 不支援");
-        return;
-      }
+      if (!navigator.gpu) { print("WebGPU 不支援"); return; }
       const adapter = await navigator.gpu.requestAdapter();
-      const device = await adapter.requestDevice();
+      const device  = await adapter.requestDevice();
 
-      // 基本常數定義
-      const STATES = 3;
-      const ALPHABETS = 5;
-      const LOG_ZERO = -1e30;
-      const WORKGROUP_SIZE = 256;
+      const STATES          = 3;
+      const ALPHABETS       = 5;
+      const LOG_ZERO        = -1e30;
+      const WORKGROUP_SIZE  = 256;
 
-      // 輔助函式：建立 shader module
-      function createShaderModule(code) {
+      function createModule(code) {
         return device.createShaderModule({ code });
       }
-
-      // -----------------------------------------------------
-      // 1. 初始化 Shader：初始化 dpBuffer 與 dAns
-      // -----------------------------------------------------
-      const initShaderCode = `
-        struct Params { len: u32 }
-        @group(0) @binding(0) var<storage, read_write> dpBuffer : array<f32>;
-        @group(0) @binding(1) var<storage, read_write> dAns : array<f32>;
-        @group(0) @binding(2) var<uniform> params : Params;
-
-        @compute @workgroup_size(64)
-        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-          let idx = global_id.x;
-          let size = params.len + 1u;
-          if (idx < size) {
-            if (idx == 0u) {
-              dpBuffer[0] = ${LOG_ZERO};                           // prevM[0]
-              dpBuffer[size + 0u] = ${LOG_ZERO};                    // prevI[0]
-              dpBuffer[2u * size + 0u] = log(1.0 / f32(params.len)); // prevD[0]
-              dpBuffer[3u * size + 0u] = ${LOG_ZERO};               // currM[0]
-              dpBuffer[4u * size + 0u] = ${LOG_ZERO};               // currI[0]
-              dpBuffer[5u * size + 0u] = log(1.0 / f32(params.len)); // currD[0]
-              dpBuffer[6u * size + 0u] = ${LOG_ZERO};               // newM[0]
-              dpBuffer[7u * size + 0u] = ${LOG_ZERO};               // newI[0]
-              dpBuffer[8u * size + 0u] = log(1.0 / f32(params.len)); // newD[0]
-            } else {
-              dpBuffer[idx] = ${LOG_ZERO};
-              dpBuffer[size + idx] = ${LOG_ZERO};
-              dpBuffer[2u * size + idx] = ${LOG_ZERO};
-              dpBuffer[3u * size + idx] = ${LOG_ZERO};
-              dpBuffer[4u * size + idx] = ${LOG_ZERO};
-              dpBuffer[5u * size + idx] = ${LOG_ZERO};
-              dpBuffer[6u * size + idx] = ${LOG_ZERO};
-              dpBuffer[7u * size + idx] = ${LOG_ZERO};
-              dpBuffer[8u * size + idx] = ${LOG_ZERO};
-            }
-          }
-          if (idx == 0u) {
-            dAns[0] = ${LOG_ZERO};
-          }
-        }
-      `;
-      const initModule = createShaderModule(initShaderCode);
-      const initPipeline = device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: initModule, entryPoint: 'main' }
-      });
-
-      // -----------------------------------------------------
-      // 2. Diagonal Kernel：計算單條對角線上每個元素（加入均勻負載分配功能）
-      // -----------------------------------------------------
-      const diagonalShaderCode = `
-        struct DiagParams { 
-          len: u32, 
-          diag: u32, 
-          numGroups: u32, 
-          padding: u32 
-        };
-        @group(0) @binding(6) var<uniform> diagParams: DiagParams;
-
-        fn logSum(logA: f32, logB: f32) -> f32 {
-          if (logA == ${LOG_ZERO}) { return logB; }
-          if (logB == ${LOG_ZERO}) { return logA; }
-          if (logA > logB) {
-            return logA + log(1.0 + exp(logB - logA));
-          } else {
-            return logB + log(1.0 + exp(logA - logB));
-          }
-        }
-
-        @group(0) @binding(0) var<storage, read> readProbMatrix : array<f32>;
-        @group(0) @binding(1) var<storage, read> haplotype : array<u32>;
-        @group(0) @binding(2) var<storage, read> emissionMatrix : array<f32>;
-        @group(0) @binding(3) var<storage, read> transitionMatrix : array<f32>;
-        @group(0) @binding(4) var<storage, read_write> dpBuffer : array<f32>;
-        @group(0) @binding(5) var<storage, read_write> dAns : array<f32>;
-
-        @compute @workgroup_size(${WORKGROUP_SIZE})
-        fn main(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) local_id: vec3<u32>) {
-          let diag = diagParams.diag;
-          let len = diagParams.len;
-          let totalCells = diag + 1u;
-          let groups = diagParams.numGroups;
-          let groupIndex = wg_id.x;
-          let start = (totalCells * groupIndex) / groups;
-          let end = (totalCells * (groupIndex + 1u)) / groups;
-          for (var t: u32 = start + local_id.x; t < end; t = t + ${WORKGROUP_SIZE}u) {
-            let index = t;
-            if (index > diag) { continue; }
-            let i = diag - index;
-            let j = index;
-            if (i >= 1u && i <= len && j >= 1u && j <= len) {
-              let hap_char = haplotype[j - 1u];
-              var hapIndex: u32 = 4u;
-              if (hap_char == 65u) { hapIndex = 0u; }
-              else if (hap_char == 67u) { hapIndex = 1u; }
-              else if (hap_char == 71u) { hapIndex = 2u; }
-              else if (hap_char == 84u) { hapIndex = 3u; }
-
-              var logProbabilityM: f32 = ${LOG_ZERO};
-              var logProbabilityI: f32 = ${LOG_ZERO};
-              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-                let prob = readProbMatrix[(i - 1u) * 4u + a];
-                if (prob > 0.0) {
-                  let emiss = emissionMatrix[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hapIndex];
-                  let candidate = log(prob) + emiss;
-                  logProbabilityM = logSum(logProbabilityM, candidate);
-                }
-              }
-              for (var a: u32 = 0u; a < 4u; a = a + 1u) {
-                let prob = readProbMatrix[(i - 1u) * 4u + a];
-                if (prob > 0.0) {
-                  let emiss = emissionMatrix[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u];
-                  let candidate = log(prob) + emiss;
-                  logProbabilityI = logSum(logProbabilityI, candidate);
-                }
-              }
-              
-              let size = len + 1u;
-              let offset_prevM = 0u;
-              let offset_prevI = size;
-              let offset_prevD = 2u * size;
-              let offset_currM = 3u * size;
-              let offset_currI = 4u * size;
-              let offset_currD = 5u * size;
-              let offset_newM = 6u * size;
-              let offset_newI = 7u * size;
-              let offset_newD = 8u * size;
-
-              let t00 = dpBuffer[offset_prevM + (i - 1u)] + transitionMatrix[0];
-              let t10 = dpBuffer[offset_prevI + (i - 1u)] + transitionMatrix[3];
-              let t20 = dpBuffer[offset_prevD + (i - 1u)] + transitionMatrix[6];
-              let newm = logProbabilityM + logSum(logSum(t00, t10), t20);
-
-              let t01 = dpBuffer[offset_currM + (i - 1u)] + transitionMatrix[1];
-              let t11 = dpBuffer[offset_currI + (i - 1u)] + transitionMatrix[4];
-              let newi = logProbabilityI + logSum(t01, t11);
-
-              let t02 = dpBuffer[offset_currM + i] + transitionMatrix[2];
-              let t22 = dpBuffer[offset_currD + i] + transitionMatrix[8];
-              let newd = logSum(t02, t22);
-
-              dpBuffer[offset_newM + i] = newm;
-              dpBuffer[offset_newI + i] = newi;
-              dpBuffer[offset_newD + i] = newd;
-
-              if (i == len) {
-                dAns[0] = logSum(dAns[0], logSum(newm, newi));
-              }
-            }
-          }
-        }
-      `;
-      const diagonalModule = createShaderModule(diagonalShaderCode);
-      const diagonalPipeline = device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: diagonalModule, entryPoint: 'main' }
-      });
-
-      // -----------------------------------------------------
-      // 3. Update Kernel：狀態更新，將 new 複製到 current、current 複製到 previous
-      // -----------------------------------------------------
-      const updateShaderCode = `
-        struct Params { len: u32 }
-        @group(0) @binding(0) var<storage, read_write> dpBuffer: array<f32>;
-        @group(0) @binding(1) var<uniform> params: Params;
-
-        @compute @workgroup_size(256)
-        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-          let len = params.len;
-          let size = len + 1u;
-          let tid = global_id.x;
-          if (tid < size) {
-            dpBuffer[tid] = dpBuffer[3u * size + tid];       
-            dpBuffer[size + tid] = dpBuffer[4u * size + tid];
-            dpBuffer[2u * size + tid] = dpBuffer[5u * size + tid];
-            dpBuffer[3u * size + tid] = dpBuffer[6u * size + tid];  
-            dpBuffer[4u * size + tid] = dpBuffer[7u * size + tid];
-            dpBuffer[5u * size + tid] = dpBuffer[8u * size + tid];
-          }
-        }
-      `;
-      const updateModule = createShaderModule(updateShaderCode);
-      const updatePipeline = device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: updateModule, entryPoint: 'main' }
-      });
-
-      // -----------------------------------------------------
-      // 4. 建立各項 Uniform 與資料 Buffer
-      // -----------------------------------------------------
-      // diagUniformBuffer 用來傳送 diagParams (len, diag, numGroups, padding)
-      let diagUniformBuffer = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-      // initUniformBuffer 用於初始化以及後續的 update （此 buffer 內存放 len）
-      let initUniformBuffer = device.createBuffer({
-        size: 4,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-
       function createBuffer(arr, usage) {
-        const buffer = device.createBuffer({
+        const buf = device.createBuffer({
           size: arr.byteLength,
-          usage: usage,
+          usage,
           mappedAtCreation: true
         });
-        const mapping = arr instanceof Float32Array ?
-                        new Float32Array(buffer.getMappedRange()) :
-                        new Uint32Array(buffer.getMappedRange());
-        mapping.set(arr);
-        buffer.unmap();
-        return buffer;
+        const ctor = arr instanceof Uint32Array ? Uint32Array : Float32Array;
+        new ctor(buf.getMappedRange()).set(arr);
+        buf.unmap();
+        return buf;
+      }
+      function makeInitArray(len) {
+        const size = len + 1;
+        const total = 3 * size;
+        const arr = new Float32Array(total).fill(LOG_ZERO);
+        arr[2 * size + 0] = Math.log(1.0 / len);
+        return arr;
       }
 
-      // -----------------------------------------------------
-      // 5. 針對不同長度測試：100, 1000, 10000, 100000
-      // -----------------------------------------------------
+      // --------------------------------------------------
+      // Diagonal Kernel
+      // --------------------------------------------------
+      const diagonalShaderCode = `
+struct DiagParams { len: u32, diag: u32, numGroups: u32, pad: u32 };
+@group(0) @binding(0) var<storage, read>     readProb      : array<f32>;
+@group(0) @binding(1) var<storage, read>     haplotype     : array<u32>;
+@group(0) @binding(2) var<storage, read>     emission      : array<f32>;
+@group(0) @binding(3) var<storage, read>     transition    : array<f32>;
+@group(0) @binding(4) var<storage, read>     dpPrev        : array<f32>;
+@group(0) @binding(5) var<storage, read>     dpCurr        : array<f32>;
+@group(0) @binding(6) var<storage, read_write> dpNew       : array<f32>;
+@group(0) @binding(7) var<storage, read_write> dAns        : array<f32>;
+@group(0) @binding(8) var<uniform>           params       : DiagParams;
+
+fn logSum(a: f32, b: f32) -> f32 {
+  if (a == ${LOG_ZERO}) { return b; }
+  if (b == ${LOG_ZERO}) { return a; }
+  if (a > b) {
+    return a + log(1.0 + exp(b - a));
+  } else {
+    return b + log(1.0 + exp(a - b));
+  }
+}
+
+@compute @workgroup_size(${WORKGROUP_SIZE})
+fn main(
+  @builtin(workgroup_id) wg: vec3<u32>,
+  @builtin(local_invocation_id) lid: vec3<u32>
+) {
+  let len        = params.len;
+  let diag       = params.diag;
+  let totalCells = diag + 1u;
+  let groups     = params.numGroups;
+  let start      = (totalCells * wg.x) / groups;
+  let end        = (totalCells * (wg.x + 1u)) / groups;
+  for (var t = start + lid.x; t < end; t = t + ${WORKGROUP_SIZE}u) {
+    if (t > diag) { continue; }
+    let i = diag - t;
+    let j = t;
+    if (i >= 1u && i <= len && j >= 1u && j <= len) {
+      let c = haplotype[j - 1u];
+      var hi: u32 = 4u;
+      if (c == 65u) { hi = 0u; } else if (c == 67u) { hi = 1u; }
+      else if (c == 71u) { hi = 2u; } else if (c == 84u) { hi = 3u; }
+
+      var logM: f32 = ${LOG_ZERO};
+      var logI: f32 = ${LOG_ZERO};
+      for (var a = 0u; a < 4u; a = a + 1u) {
+        let p = readProb[(i - 1u) * 4u + a];
+        if (p > 0.0) {
+          logM = logSum(logM, log(p) + emission[0u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + hi]);
+          logI = logSum(logI, log(p) + emission[1u * ${ALPHABETS}u * ${ALPHABETS}u + a * ${ALPHABETS}u + 4u]);
+        }
+      }
+      let size = len + 1u;
+      let t00 = dpPrev[0u * size + (i - 1u)] + transition[0];
+      let t10 = dpPrev[1u * size + (i - 1u)] + transition[3];
+      let t20 = dpPrev[2u * size + (i - 1u)] + transition[6];
+      let newM = logM + logSum(logSum(t00,t10), t20);
+
+      let t01 = dpCurr[0u * size + (i - 1u)] + transition[1];
+      let t11 = dpCurr[1u * size + (i - 1u)] + transition[4];
+      let newI = logI + logSum(t01,t11);
+
+      let t02 = dpCurr[0u * size + i] + transition[2];
+      let t22 = dpCurr[2u * size + i] + transition[8];
+      let newD = logSum(t02,t22);
+
+      dpNew[0u * size + i] = newM;
+      dpNew[1u * size + i] = newI;
+      dpNew[2u * size + i] = newD;
+
+      if (i == len) {
+        dAns[0] = logSum(dAns[0], logSum(newM,newI));
+      }
+    }
+  }
+}
+`;
+      const diagModule   = createModule(diagonalShaderCode);
+      const diagPipeline = device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: diagModule, entryPoint: 'main' }
+      });
+
+      // ------------------------------------------
+      // 測試不同長度：100,1000,10000,100000
+      // ------------------------------------------
       const lengths = [100, 1000, 10000, 100000];
       for (let len of lengths) {
         print(`開始計算長度 ${len}`);
-        // 建立 transitionMatrix、emissionMatrix、readProbMatrix 與 haplotype（與之前範例相同）
-        const transitionMatrix = new Float32Array([
+        const transition = new Float32Array([
           Math.log(0.9), Math.log(0.1), LOG_ZERO,
           Math.log(0.1), Math.log(0.8), Math.log(0.1),
           Math.log(0.1), LOG_ZERO,     Math.log(0.9)
         ]);
-        const emissionMatrix = new Float32Array(STATES * ALPHABETS * ALPHABETS);
-        emissionMatrix[0 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 0] = Math.log(0.9);
-        emissionMatrix[0 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 1] = Math.log(0.8);
-        emissionMatrix[0 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 2] = Math.log(0.9);
-        emissionMatrix[0 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 3] = Math.log(0.7);
-        emissionMatrix[0 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = Math.log(0.1);
-        emissionMatrix[1 * ALPHABETS * ALPHABETS + 0 * ALPHABETS + 4] = Math.log(0.1);
-        emissionMatrix[1 * ALPHABETS * ALPHABETS + 1 * ALPHABETS + 4] = Math.log(0.1);
-        emissionMatrix[1 * ALPHABETS * ALPHABETS + 2 * ALPHABETS + 4] = Math.log(0.1);
-        emissionMatrix[1 * ALPHABETS * ALPHABETS + 3 * ALPHABETS + 4] = Math.log(0.1);
-        emissionMatrix[1 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = Math.log(0.6);
-        emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 0] = Math.log(0.2);
-        emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 1] = Math.log(0.2);
-        emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 2] = Math.log(0.2);
-        emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 3] = Math.log(0.2);
-        emissionMatrix[2 * ALPHABETS * ALPHABETS + 4 * ALPHABETS + 4] = Math.log(0.2);
+        // **手動初始化 emissionMatrix**
+        const emission = new Float32Array(STATES * ALPHABETS * ALPHABETS);
+        emission[0*ALPHABETS*ALPHABETS + 0*ALPHABETS + 0] = Math.log(0.9);
+        emission[0*ALPHABETS*ALPHABETS + 1*ALPHABETS + 1] = Math.log(0.8);
+        emission[0*ALPHABETS*ALPHABETS + 2*ALPHABETS + 2] = Math.log(0.9);
+        emission[0*ALPHABETS*ALPHABETS + 3*ALPHABETS + 3] = Math.log(0.7);
+        emission[0*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = Math.log(0.1);
+        emission[1*ALPHABETS*ALPHABETS + 0*ALPHABETS + 4] = Math.log(0.1);
+        emission[1*ALPHABETS*ALPHABETS + 1*ALPHABETS + 4] = Math.log(0.1);
+        emission[1*ALPHABETS*ALPHABETS + 2*ALPHABETS + 4] = Math.log(0.1);
+        emission[1*ALPHABETS*ALPHABETS + 3*ALPHABETS + 4] = Math.log(0.1);
+        emission[1*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = Math.log(0.6);
+        emission[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 0] = Math.log(0.2);
+        emission[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 1] = Math.log(0.2);
+        emission[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 2] = Math.log(0.2);
+        emission[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 3] = Math.log(0.2);
+        emission[2*ALPHABETS*ALPHABETS + 4*ALPHABETS + 4] = Math.log(0.2);
 
-        const readProbMatrix = new Float32Array(len * 4);
-        for (let i = 0; i < len * 4; i++) {
-          readProbMatrix[i] = 0.25;
-        }
-        const haplotype = new Uint32Array(len);
-        for (let i = 0; i < len; i++) {
-          haplotype[i] = 65;
-        }
+        const readProb  = new Float32Array(len * 4).fill(0.25);
+        const haplotype = new Uint32Array(len).fill(65);
 
-        const readProbBuffer = createBuffer(readProbMatrix, GPUBufferUsage.STORAGE);
-        const haplotypeBuffer = createBuffer(haplotype, GPUBufferUsage.STORAGE);
-        const emissionBuffer = createBuffer(emissionMatrix, GPUBufferUsage.STORAGE);
-        const transitionBuffer = createBuffer(transitionMatrix, GPUBufferUsage.STORAGE);
+        const readBuf  = createBuffer(readProb, GPUBufferUsage.STORAGE);
+        const hapBuf   = createBuffer(haplotype, GPUBufferUsage.STORAGE);
+        const emiBuf   = createBuffer(emission, GPUBufferUsage.STORAGE);
+        const traBuf   = createBuffer(transition, GPUBufferUsage.STORAGE);
+        const dAnsBuf  = createBuffer(new Float32Array([LOG_ZERO]), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
 
-        // dpBuffer 大小：9 * (len+1) 個 f32
-        const dpBufferSize = 9 * (len + 1) * 4;
-        const dpBuffer = device.createBuffer({
-          size: dpBufferSize,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
-        });
-        const dAnsBufferSize = 4;
-        const dAnsBuffer = device.createBuffer({
-          size: dAnsBufferSize,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+        let dpPrevBuf  = createBuffer(makeInitArray(len), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+        let dpCurrBuf  = createBuffer(makeInitArray(len), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+        let dpNewBuf   = createBuffer(makeInitArray(len), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+
+        const diagUniformBuf = device.createBuffer({
+          size: 16,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
-        // ---------------------------
-        // 執行初始化 pass
-        // ---------------------------
-        const initUniformData = new Uint32Array([len]);
-        device.queue.writeBuffer(initUniformBuffer, 0, initUniformData.buffer);
-        const initBindGroup = device.createBindGroup({
-          layout: initPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: dpBuffer } },
-            { binding: 1, resource: { buffer: dAnsBuffer } },
-            { binding: 2, resource: { buffer: initUniformBuffer } }
-          ]
-        });
-        let commandEncoder = device.createCommandEncoder();
-        {
-          const pass = commandEncoder.beginComputePass();
-          pass.setPipeline(initPipeline);
-          pass.setBindGroup(0, initBindGroup);
-          const workgroups = Math.ceil((len + 1) / 64);
-          pass.dispatchWorkgroups(workgroups);
-          pass.end();
-        }
-        device.queue.submit([commandEncoder.finish()]);
-        await device.queue.onSubmittedWorkDone();
-
-        // 建立 diagonalBindGroup 與 updateBindGroup（各自綁定所需 buffer）
-        const diagonalBindGroup = device.createBindGroup({
-          layout: diagonalPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: readProbBuffer } },
-            { binding: 1, resource: { buffer: haplotypeBuffer } },
-            { binding: 2, resource: { buffer: emissionBuffer } },
-            { binding: 3, resource: { buffer: transitionBuffer } },
-            { binding: 4, resource: { buffer: dpBuffer } },
-            { binding: 5, resource: { buffer: dAnsBuffer } },
-            { binding: 6, resource: { buffer: diagUniformBuffer } }
-          ]
-        });
-        const updateBindGroup = device.createBindGroup({
-          layout: updatePipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: dpBuffer } },
-            { binding: 1, resource: { buffer: initUniformBuffer } }
-          ]
-        });
-
-        // ---------------------------
-        // 依序處理每條對角線：
-        // ---------------------------
         const totalDiag = 2 * len;
         const t0 = performance.now();
         for (let diag = 1; diag <= totalDiag; diag++) {
           const totalCells = diag + 1;
-          const numGroups = Math.ceil(totalCells / WORKGROUP_SIZE);
-          const diagParams = new Uint32Array([len, diag, numGroups, 0]);
-          device.queue.writeBuffer(diagUniformBuffer, 0, diagParams.buffer);
+          const numGroups  = Math.ceil(totalCells / WORKGROUP_SIZE);
+          device.queue.writeBuffer(diagUniformBuf, 0, new Uint32Array([len, diag, numGroups, 0]).buffer);
 
-          let commandEncoder = device.createCommandEncoder();
-          const pass = commandEncoder.beginComputePass();
-          pass.setPipeline(diagonalPipeline);
-          pass.setBindGroup(0, diagonalBindGroup);
+          const bg = device.createBindGroup({
+            layout: diagPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: readBuf } },
+              { binding: 1, resource: { buffer: hapBuf } },
+              { binding: 2, resource: { buffer: emiBuf } },
+              { binding: 3, resource: { buffer: traBuf } },
+              { binding: 4, resource: { buffer: dpPrevBuf } },
+              { binding: 5, resource: { buffer: dpCurrBuf } },
+              { binding: 6, resource: { buffer: dpNewBuf } },
+              { binding: 7, resource: { buffer: dAnsBuf } },
+              { binding: 8, resource: { buffer: diagUniformBuf } }
+            ]
+          });
+
+          let encoder = device.createCommandEncoder();
+          let pass    = encoder.beginComputePass();
+          pass.setPipeline(diagPipeline);
+          pass.setBindGroup(0, bg);
           pass.dispatchWorkgroups(numGroups);
           pass.end();
-          device.queue.submit([commandEncoder.finish()]);
+          device.queue.submit([encoder.finish()]);
           await device.queue.onSubmittedWorkDone();
 
-          // 狀態更新：將 new 狀態複製到 current，current 複製到 previous
-          commandEncoder = device.createCommandEncoder();
-          const updatePass = commandEncoder.beginComputePass();
-          updatePass.setPipeline(updatePipeline);
-          updatePass.setBindGroup(0, updateBindGroup);
-          const updateWorkgroups = Math.ceil((len + 1) / 256);
-          updatePass.dispatchWorkgroups(updateWorkgroups);
-          updatePass.end();
-          device.queue.submit([commandEncoder.finish()]);
-          await device.queue.onSubmittedWorkDone();
+          // JavaScript 層面指標交換
+          [dpPrevBuf, dpCurrBuf, dpNewBuf] = [dpCurrBuf, dpNewBuf, dpPrevBuf];
         }
         const t1 = performance.now();
-        const elapsed = (t1 - t0) / 1000;
+        const elapsed = ((t1 - t0) / 1000).toFixed(3);
 
-        // ---------------------------
-        // 從 GPU 讀回 dAns 結果
-        // ---------------------------
-        const readBuffer = device.createBuffer({
-          size: dAnsBufferSize,
+        const readBack = device.createBuffer({
+          size: 4,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
         {
-          let commandEncoder = device.createCommandEncoder();
-          commandEncoder.copyBufferToBuffer(dAnsBuffer, 0, readBuffer, 0, dAnsBufferSize);
-          device.queue.submit([commandEncoder.finish()]);
-          await readBuffer.mapAsync(GPUMapMode.READ);
+          let enc = device.createCommandEncoder();
+          enc.copyBufferToBuffer(dAnsBuf, 0, readBack, 0, 4);
+          device.queue.submit([enc.finish()]);
+          await readBack.mapAsync(GPUMapMode.READ);
         }
-        const arrayBuffer = readBuffer.getMappedRange();
-        const ans = new Float32Array(arrayBuffer)[0];
-        readBuffer.unmap();
+        const result = new Float32Array(readBack.getMappedRange())[0];
+        readBack.unmap();
 
-        print(`長度: ${len}, 耗時: ${elapsed.toFixed(3)} 秒, Log-Likelihood: ${ans}`);
+        print(`長度: ${len}, 耗時: ${elapsed} 秒, Log-Likelihood: ${result}`);
       }
     }
+
     runPairHMM();
   </script>
 </body>
