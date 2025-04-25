@@ -141,7 +141,7 @@ fn main(@builtin(workgroup_id) wg_id : vec3<u32>, @builtin(local_invocation_id) 
         return arr;
       }
       const dAnsInit = new Float32Array([LOG_ZERO]);
-      const lengths = [100,1000,10000,100000,200000];
+      const lengths = [100,1000,10000,100000];
 
       for (const len of lengths) {
         print(`開始計算長度 ${len}`);
