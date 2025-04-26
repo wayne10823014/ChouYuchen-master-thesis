@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 lengths = [100, 1000, 10000, 100000]
 
 # 各版本的執行時間（單位：秒）
-times_cuda = [0.00531861, 0.0536657, 0.499455, 6.31815]
+times_cuda = [0.00229208,0.0208331, 0.190848, 2.76963]
 times_cpu = [0.00372979, 0.328911, 32.615, 3270.82]
-times_webgpu_basic = [0.155, 0.877, 66.254, 921.004]
-times_webgpu_optimized = [0.020, 0.074, 0.534, 11.640]
+times_webgpu_basic = [0.135, 0.602, 21.830, 466.797]
+times_webgpu_optimized = [0.020, 0.060, 0.412, 4.147]
 
 # 計算 speedup（相對於 CPU 版本，即 CPU 時間 除以 其他版本時間）
 speedup_cuda = [cpu / cuda for cpu, cuda in zip(times_cpu, times_cuda)]
@@ -21,7 +21,7 @@ x = list(range(len(lengths)))
 plt.figure(figsize=(10, 6))
 
 # 繪製各版本的 Speedup 折線圖
-# plt.plot(x, speedup_cuda, marker='o', linestyle='-', label='CUDA')
+plt.plot(x, speedup_cuda, marker='o', linestyle='-', label='CUDA')
 plt.plot(x, speedup_cpu, marker='s', linestyle='-', label='CPU')
 plt.plot(x, speedup_webgpu_basic, marker='^', linestyle='-', label='WebGPU Basic Version')
 plt.plot(x, speedup_webgpu_optimized, marker='d', linestyle='-', label='WebGPU Optimized Version')
@@ -44,7 +44,7 @@ def annotate_points(x_vals, y_vals):
         plt.text(x_vals[i], s + offset, f"{s:.2f}", ha='center', va='bottom', fontsize=9)
 
 # 分別為各條折線圖的資料點標示加速倍率
-# annotate_points(x, speedup_cuda)
+annotate_points(x, speedup_cuda)
 annotate_points(x, speedup_cpu)
 annotate_points(x, speedup_webgpu_basic)
 annotate_points(x, speedup_webgpu_optimized)
