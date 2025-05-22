@@ -55,13 +55,14 @@ OpenCL 旨在提供跨硬體的 GPU 加速解決方案，支援 NVIDIA、AMD 與
 #### 2.2.3 傳統方案的門檻與局限
 總結而言，CUDA 與 OpenCL 雖在效能上具優勢，但均需繁瑣的前置設定（如驅動安裝、SDK 配置），對教育現場與臨床前端應用形成障礙。雲端 GPU 服務（如 AWS、Google Cloud）試圖解決本機設定問題，但引入資料傳輸延遲與隱私風險（Krampis et al., 2012）。此外，這些方案高度依賴特定硬體架構，無法實現真正的跨平台相容性，限制其在資源受限環境（如筆記型電腦或嵌入式設備）中的應用。
 ### 2.3 WebGPU 的興起與技術特性
+
 #### 2.3.1 WebGPU 的技術背景
-WebGPU 於 2024 年 12 月 19 日進入 W3C Candidate Recommendation Snapshot 階段，尚未成為正式 Recommendation，尚待完整實作與互通性測試（W3C, 2024）。WebGPU 透過單一 JavaScript API 映射 Vulkan、Direct3D 12 與 Metal 後端，支援 NVIDIA、AMD、Intel 及 Apple Silicon GPU。其核心優勢在於免安裝驅動、跨平台相容與瀏覽器沙盒的安全性，允許使用者僅需開啟瀏覽器即可執行平行運算。WebGPU 的計算管線（Compute Shader）以 WGSL（WebGPU Shading Language）撰寫，支援高效能矩陣運算與記憶體管理，適用於高強度運算任務。
 
-![WebGPU 架構對應示意](https://hackmd.io/_uploads/SJHJ2Go-xe.png)
-圖 2-1　WebGPU API 與原生後端的映射關係
-JavaScript / TypeScript 透過 WebGPU API 統一介面呼叫，最終由瀏覽器轉譯至 Vulkan（Linux）、Direct3D 12（Windows）或 Metal（macOS/iOS），並提交至 GPU 執行。
+WebGPU 於 2024 年 12 月 19 日進入 W3C Candidate Recommendation Snapshot 階段，尚未成為正式 Recommendation，仍待完整實作與互通性測試（W3C, 2024）。\*\*如圖 2-1 所示，WebGPU 以單一 JavaScript／TypeScript API 將程式呼叫轉譯至 Vulkan、Direct3D 12 或 Metal 後端，最終提交至各家 GPU 執行，因而具備「免驅動安裝、跨平台相容、瀏覽器沙盒安全」三大優勢。\*\*WebGPU 的計算管線（Compute Shader）以 WGSL（WebGPU Shading Language）撰寫，可支援高效能矩陣運算與記憶體管理，適用於高強度運算任務。
 
+![webgpu\_stack](https://hackmd.io/_uploads/SJHJ2Go-xe.png)
+**圖 2-1　WebGPU API 與原生後端的映射關係**
+JavaScript／TypeScript 透過 WebGPU API 統一介面呼叫，瀏覽器再依作業系統選擇 Vulkan（Linux）、Direct3D 12（Windows）或 Metal（macOS／iOS）作為實際後端並提交至 GPU 執行。
 
 #### 2.3.2 WebGPU 在高性能計算的潛力
 WebGPU 在圖形渲染與機器學習領域已展現潛力。例如，MDN Web Docs（2025）介紹 WebGPU 在遊戲渲染中的高效能表現，實現媲美原生 Vulkan 的效果；TensorFlow.js 的 WebGPU 後端則加速了瀏覽器端神經網路訓練（TensorFlow.js Team, 2024）。Google Chrome Team (2024) 指出，Transformers.js 在 WebGPU 模式下於 NVIDIA RTX 4060 Laptop 測試 BERT-base 模型時，比 WebAssembly 快 32.51 倍，顯示其高效能潛力。這些案例表明 WebGPU 的計算模型能有效利用 GPU 的平行化能力。然而，其在生物資訊的應用尚處於初步階段，主要因該領域對計算精度與記憶體存取效率要求更高。WebGPU 的 Compute Shader 與傳統 GPU 框架的異同在於其抽象層設計，雖犧牲部分低階控制，但換取跨硬體的通用性。
@@ -106,8 +107,9 @@ $$
 而 Delete 狀態讀端為 gap，故發射機率固定為 1。
 
 ---
-
 ### 3.2　Pair-HMM Forward 演算法
+
+Pair-HMM Forward 的遞迴必須沿動態規畫矩陣之反對角線 (wavefront) 逐步推進——**如圖 3-1 所示**，每條 wavefront 必須等前一條全部完成後才能繼續；因此在 GPU 上若缺乏裝置端全域同步，就會成為後續效能瓶頸。
 
 1. **初始化**
 
@@ -122,10 +124,10 @@ $$
 $$
 \begin{aligned}
 M_{i,j}&=
- e^{M}_{i,j}\Bigl(
+ e^{M}_{i,j}\!\Bigl(
  t_{MM}M_{i-1,j-1}+t_{IM}I_{i-1,j-1}+t_{DM}D_{i-1,j-1}\Bigr),\\
 I_{i,j}&=
- e^{I}_{i,j}\Bigl(
+ e^{I}_{i,j}\!\Bigl(
  t_{MI}M_{i-1,j}+t_{II}I_{i-1,j}\Bigr),\\
 D_{i,j}&=
  t_{MD}M_{i,j-1}+t_{DD}D_{i,j-1}.
@@ -140,6 +142,10 @@ $$
 
 4. **時間複雜度** 為 $\mathcal{O}(mn)$。
 
+![wavefront](https://hackmd.io/_uploads/SJ81kLn-ee.png)
+**圖 3-1　Pair-HMM Forward 反對角線 (wavefront) 計算示意**
+左：三隱狀態 $M/I/D$ 的遞迴依賴方向。右：黃色箭頭顯示計算沿斜對角線分批推進；紅、綠、藍方塊分別代表當前 wavefront 的 $M$、$I$、$D$ 狀態。
+
 ### 3.3 系統設計與實作（System Design and Implementation）
 
 #### 3.3.1 C++／CUDA 版
@@ -152,10 +158,10 @@ $$
 
 ##### (一) 從 CUDA「多次 Kernel」到 WebGPU「多次 dispatch」
 
-Pair-HMM Forward 的計算沿反對角線 (wavefront) 逐步推進，每條 wavefront 必須等前一條完全結束後才能繼續。CUDA 最直接的作法是在主機程式中用 `for` 迴圈連續啟動 kernels，並在兩次 kernel 之間呼叫 `cudaDeviceSynchronize()`——如 **圖 3-1** 所示，Synchronization 點始終留在 **GPU 內部**；反觀 WebGPU 缺乏裝置端全域 barrier，若要同步只能回到 JavaScript 重新 `dispatch`，因此對長度為 $N$ 的序列勢必產生 **$2N$ 次 CPU↔GPU 往返**，成為 Baseline 的第一個瓶頸。
+Pair-HMM Forward 的計算沿反對角線 (wavefront) 逐步推進，每條 wavefront 必須等前一條完全結束後才能繼續。CUDA 最直接的作法是在主機程式中用 `for` 迴圈連續啟動 kernels，並在兩次 kernel 之間呼叫 `cudaDeviceSynchronize()`——如 **圖 3-2** 所示，Synchronization 點始終留在 **GPU 內部**；反觀 WebGPU 缺乏裝置端全域 barrier，若要同步只能回到 JavaScript 重新 `dispatch`，因此對長度為 $N$ 的序列勢必產生 **$2N$ 次 CPU↔GPU 往返**，成為 Baseline 的第一個瓶頸。
 
 ![global\_sync](https://hackmd.io/_uploads/r19f4fsWeg.png)
-**圖 3-1　CUDA 與 WebGPU 全域同步機制比較**
+**圖 3-2　CUDA 與 WebGPU 全域同步機制比較**
 CUDA 可於 GPU 端插入 *global* barrier；WebGPU 必須回到 Host 端重新 `dispatch` 才能觸發全域同步。
 
 主機呼叫 `queue.submit()` 送出上一條 wavefront 後，還得等待 `device.queue.onSubmittedWorkDone()` 才能更新 uniform 並提交下一個 dispatch。對 $N=10^{5}$ 的序列而言，這意味著將呼叫 **20 萬次 `submit → await`**，同步延遲完全暴露在 JavaScript 執行緒，效能因而大幅受限。
@@ -163,10 +169,10 @@ CUDA 可於 GPU 端插入 *global* barrier；WebGPU 必須回到 Host 端重新 
 
 ##### (二) 指標輪替與 BindGroup 的不可變性
 
-CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `prev → curr → new` 的角色依序推移，驅動層無須重新配置資源。相對地，WebGPU 的 Buffer 綁定點在 **BindGroup 建立時即被鎖定**。若想讓下一條 wavefront 讀取新的 DP Buffer，就只能重新呼叫 `device.createBindGroup()`，把相同 binding slot 指向新的 `GPUBuffer`。這一過程會歷經 **V8 → Blink → Dawn → Driver** 多層驗證，單次耗時約 5–15 µs；**如圖 3-2 所示，WebGPU 在一次 `createBindGroup()` 呼叫中須通過「JavaScript 執行緒 → GPU Process → Driver IPC」等多段傳遞，導致當 $N=10^{5}$ 時累積延遲動輒數十秒，成為 Baseline 的第二個瓶頸。**
+CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `prev → curr → new` 的角色依序推移，驅動層無須重新配置資源。相對地，WebGPU 的 Buffer 綁定點在 **BindGroup 建立時即被鎖定**。若想讓下一條 wavefront 讀取新的 DP Buffer，就只能重新呼叫 `device.createBindGroup()`，把相同 binding slot 指向新的 `GPUBuffer`。這一過程會歷經 **V8 → Blink → Dawn → Driver** 多層驗證，單次耗時約 5–15 µs；**如圖 3-3 所示，WebGPU 在一次 `createBindGroup()` 呼叫中須通過「JavaScript 執行緒 → GPU Process → Driver IPC」等多段傳遞，導致當 $N=10^{5}$ 時累積延遲動輒數十秒，成為 Baseline 的第二個瓶頸。**
 
 ![ipc\_path](https://hackmd.io/_uploads/SJi1Nfi-gl.png)
-**圖 3-2　WebGPU Storage Buffer 綁定的多層 IPC／驗證路徑**
+**圖 3-3　WebGPU Storage Buffer 綁定的多層 IPC／驗證路徑**
 相較 CUDA 直接「Host→VRAM」，WebGPU 額外經過三層橋接與驗證，令單次 `createBindGroup()` 延遲提升至 5–15 µs。
 
 
@@ -191,7 +197,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 
 ##### 3.3.3.1 單一 CommandBuffer 批次提交──降低 CPU–GPU 往返
 
-如 **圖 3-3** 所示，我們將原本 2 N 次 `dispatchWorkgroups` 先錄進同一支 `CommandBuffer`，最終僅以一次 `queue.submit()` 送交 GPU，實測可消除超過 99.99 % 的 IPC 往返延遲。
+如 **圖 3-4** 所示，我們將原本 2 N 次 `dispatchWorkgroups` 先錄進同一支 `CommandBuffer`，最終僅以一次 `queue.submit()` 送交 GPU，實測可消除超過 99.99 % 的 IPC 往返延遲。
 
 **CommandEncoder 與指令流。** 在 WebGPU 中，`CommandEncoder` 負責錄製 `beginComputePass`、`dispatchWorkgroups`、`copyBufferToBuffer`、`end` 等命令。當呼叫 `encoder.finish()` 產生 `GPUCommandBuffer` 並以 `device.queue.submit([commandBuffer])` 提交後，GPU 會依序執行所有已錄製指令而無需 CPU 介入。只有在程式刻意呼叫 `await device.queue.onSubmittedWorkDone()` 時，JavaScript 執行緒才會同步等待整條指令流完成。
 
@@ -200,13 +206,13 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 **一次性指令流的優勢。** 本研究保留對角線分段邏輯，但僅在錄製階段多次 `beginComputePass`，最後只 `submit` 一次。如此 GPU 得以從頭到尾連續執行，CPU 無須插入同步；驅動驗證與排程成本大幅下降；`dispatch` 與 `copy` 命令連續排列亦使 DRAM 流量更平穩。將 2 N 次 IPC 壓縮為 1 次後，總執行時間明顯縮短，證實批次提交的效益。
 
 ![cmd\_buffer](https://hackmd.io/_uploads/BkGH7Mo-ee.png)
-**圖 3-3　單一 CommandBuffer 批次提交流程**
+**圖 3-4　單一 CommandBuffer 批次提交流程**
 多條 wavefront 的 `dispatchWorkgroups` 先於 Host 端錄製入同一 `CommandBuffer`，最終一次 `queue.submit()` 送交 GPU，省卻 2 N 次 IPC 與排程開銷。
 
 ---
 ##### 3.3.3.2 Dynamic Uniform Offset──減少常量更新成本
 
-如 **圖 3-4** 所示，我們將每條反對角線 (diag) 的常量 (len, diag, numGroups) 以 256 B 對齊連續排入單顆 UBO，`dispatch` 時僅靠 dynamic offset 切換；此舉使 BindGroup 重建次數從「每回合 10+」降至 3，單次延遲減半並大幅削弱 Baseline 的第二瓶頸。
+如 **圖 3-5** 所示，我們將每條反對角線 (diag) 的常量 (len, diag, numGroups) 以 256 B 對齊連續排入單顆 UBO，`dispatch` 時僅靠 dynamic offset 切換；此舉使 BindGroup 重建次數從「每回合 10+」降至 3，單次延遲減半並大幅削弱 Baseline 的第二瓶頸。
 
 **多小 buffer 與重複 BindGroup 問題。** Baseline 在每條對角線都需重建 BindGroup 以切換 `dpPrev / dpCurr / dpNew` 與各類常量 buffer，單次 `createBindGroup()` 必經 **V8 → Blink → Dawn** 多層驗證，耗時 5–15 µs；當 $N=10^{5}$ 時，累積延遲達數秒。
 
@@ -214,7 +220,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 `offset(diag) = (diag − 1) × UB_ALIGN` 即可切換；重建成本由「每回合 10+ 項 binding」降至「3 項 binding」，平均延遲減半。
 
 ![dyn\_offset](https://hackmd.io/_uploads/BkEtmfsbxl.png)
-**圖 3-4　Dynamic Uniform Offset 資料佈局**
+**圖 3-5　Dynamic Uniform Offset 資料佈局**
 每條反對角線常量 (len, diag, numGroups) 以 256 B 為對齊單位連續存放；`dispatch` 時僅調整 dynamic offset，無須重建 BindGroup。
 
 
@@ -313,6 +319,7 @@ S_{\text{Opt}\leftarrow\text{CPU}}(N)=
 \frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)} \tag{4-2}
 $$
 
+    
 |      $N$ | M1 CPU (s) | **M1 Opt.** (s) | Opt./CPU | UHD CPU (s) | **UHD Opt.** (s) | Opt./CPU |
 | -------: | ---------: | --------------: | -------: | ----------: | ---------------: | -------: |
 | $10^{2}$ |    0.00391 |           0.045 |    0.09× |      0.0101 |            0.136 |    0.07× |
@@ -320,8 +327,9 @@ $$
 | $10^{4}$ |      31.38 |       **0.272** |     115× |       95.51 |        **1.524** |    62.7× |
 | $10^{5}$ |     3347.6 |       **7.245** |     463× |       10851 |        **48.79** |     222× |
 
-> **重點發現：** Intel UHD 620 仍獲得最高 **222×** 加速（圖 4-5），而 Apple M1 因 UMA 架構在長序列下達 **463×**（圖 4-6）；圖 4-7 證明相同 WGSL shader 具備良好跨硬體可攜性。
-
+    
+表 4-3　Apple M1 與 Intel UHD 620 上 WebGPU-Optimized 相對單執行緒 CPU 的加速
+    
 ![uhd620](https://hackmd.io/_uploads/H1g79koZge.png)
 圖 4-5　Intel UHD 620 上 WebGPU-Optimized 相對 CPU 的加速比
 
@@ -349,7 +357,7 @@ $$
 | WGPU-Opt - M1      | $2.8\times10^{-4}\%$ | $1.5\times10^{-5}\%$ | $2.2\times10^{-4}\%$ | $3.8\times10^{-4}\%$ | $3.8\times10^{-4}\%$     |
 | WGPU-Opt - UHD 620 | $2.5\times10^{-4}\%$ | $1.3\times10^{-5}\%$ | $2.2\times10^{-4}\%$ | $3.8\times10^{-4}\%$ | $3.8\times10^{-4}\%$     |
 
-> **圖 4-8（若有誤差曲線圖可補）** 显示所有平台最大誤差皆低於 $4\times10^{-4}\%$，證明單精度 WGSL 與 CUDA 在數值上高度一致。
+表 4-4　各平台相對 CUDA-2070 S 之 Log-Likelihood 百分比誤差
 
 ---
 
@@ -364,16 +372,16 @@ $$
 
 實驗結果顯示，即使在 RTX 2070 Super 上採用 WebGPU，我們的最佳化版本仍落後 CUDA 12-88%，而在 Apple M1 與 Intel UHD 620 上雖相對 CPU 可獲得數十到數百倍的加速，絕對執行時間仍高於 CUDA。換言之，瓶頸不在演算法流程，而在硬體微架構與 API 設計的交互限制。因而以下依次從特殊函式單元缺失、快取路徑差異以及資源綁定開銷三方面剖析其來源與影響。
 
-##### 5.1.1 SFU 缺失對 'log/exp' 吞吐量的影響
+##### 5.1.1 SFU 缺失對 `log/exp` 吞吐量的影響
 
-自 Volta 之後的 CUDA 核心，在每個 SM 內配置 32 條 Special Function Unit (SFU)，能於 4 個 cycle 內完成整個 warp 的 'sin' 'cos' 'exp2' 'log2' 等運算，並與 FMA 管線並行發射。反觀 WebGPU，為確保跨 NVIDIA AMD Intel 及 Apple 平台語義一致，WGSL 編譯器僅能將 log/exp 展開為 mantissa／exponent 拆解、LUT 近似，再以 6 階多項式 內嵌 於 兩次 FMA 中完成校正（一次聚合 3 項係數）。整體延遲約 11–12 cycle，雖然仍可與 ALU/FMA 管線交錯，但在波前 (wavefront) 依賴下會使同一 warp 約 10 個時脈無法發射其他指令，累積至長序列時造成額外 0.25–0.30 s 延遲。
+如 **圖 5-1** 所示，CUDA 自 Volta 之後在每個 SM 內配置 32 條 **Special Function Unit (SFU)**，能在 4 cycles 內完成一整個 warp 的 `log/exp`；而為了跨 NVIDIA／AMD／Intel／Apple 平台保持語義一致，WebGPU 只能將 `log/exp` 拆成 *mantissa / exponent*、查表 (LUT) 近似，再以兩次 FMA 完成 6 階多項式校正，整體需 11–12 cycles。
 
-![CUDA vs WebGPU log-exp 管線圖](https://hackmd.io/_uploads/BJCN2fiWxe.png)
-圖 5-1　CUDA SFU 與 WebGPU 軟體 log/exp 管線延遲比較CUDA 透過硬體特殊函式單元（SFU）於 4 cycles 內完成 log/exp；WebGPU 需依序經過 mantissa 拆分（ALU）、LUT 近似、FMA 多項式校正及寫回，總耗時 11–12 cycles。   
-    
-若以 1.7 GHz 時脈推估，SFU 峰值約每 cycle 320 次 'log/exp'，展開法僅剩 170 次；Pair-HMM 單格平均需 30 次 'log/exp'，N=10^5 時共觸發 3×10^11 次，CUDA 理論僅 0.59 s，而 WebGPU 至少 1.01 s，單此因素即帶來 0.42 s 差距。
+![log\_exp\_pipeline](https://hackmd.io/_uploads/BJCN2fiWxe.png)
+**圖 5-1　CUDA SFU 與 WebGPU 軟體 `log/exp` 管線延遲比較**
+CUDA 透過硬體 SFU 於 4 cycles 內完成；WebGPU 需歷經 mantissa 拆分（ALU, 1 cycle）→ LUT 線性插值（4 cycles）→ FMA 多項式校正（4 cycles）→ 取 ln 乘 LN2 與寫回（共 2–3 cycles），總延遲 11–12 cycles。
 
-然而波前平行化的 thread 利用率僅約 65%（Nsight Compute 量測），因此真正由 'log/exp' 帶來的額外延遲約落在 0.25–0.30 s，佔總差距 45–55%。再加上展開版本長時間獨占 FMA，使其他乘加指令排隊；當 N 由 10^2 擴至 10^5，總 'log/exp' 調用量隨 N^2 增長，排隊延遲亦呈平方放大，最終導致秒級差距。
+若以 1.7 GHz 時脈推估，SFU 峰值約 **320 次/cycle**；展開法僅剩 **170 次/cycle**。Pair-HMM 每格平均需 30 次 `log/exp`，$N=10^{5}$ 時總調用量 $3\times10^{11}$ 次：CUDA 理論 0.59 s，WebGPU 至少 1.01 s，單此因素即造成 ≈0.42 s 差距。實測在 wavefront 依賴與 65 % thread 利用率下，額外延遲約 0.25–0.30 s（佔總差距 45–55 %）；隨 $N$ 呈平方放大，最終導致秒級性能差異。
+
 
 ##### 5.1.2 快取政策差異: 32 KB L1 命中 vs. Storage Path 旁路
 
