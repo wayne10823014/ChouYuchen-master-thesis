@@ -5,9 +5,9 @@
 
 本研究證實僅憑 JavaScript + WGSL，即能於瀏覽器中於秒級完成 Pair-HMM Forward 計算，並提出三項瀏覽器端專屬優化策略及跨硬體實測結果。**此成果為 Web-native 基因體分析工具的普及奠定基礎，推動生物資訊運算的民主化與即時化。**
 
-# 第 1 章　緒論（Introduction）
+## 第 1 章　緒論（Introduction）
 
-## 1.1 研究背景（Background）
+### 1.1 研究背景（Background）
 
 高通量定序（Next-Generation Sequencing, NGS）技術的蓬勃發展，使得基因體資料的規模與複雜度以指數速度攀升，生物資訊分析對計算效能提出前所未有的挑戰。**Pair Hidden Markov Model（Pair-HMM）Forward 演算法**能同時支援序列比對、基因型鑑定與變異偵測，是眾多基因體流程不可或缺的運算核心。
 
@@ -15,7 +15,7 @@
 
 自 2024 年 5 月 WebGPU 正式進入 Chrome 穩定通道以來，Firefox Nightly 與 Edge Dev 亦陸續提供實驗支援。WebGPU 以單一 JavaScript API 映射 Vulkan、Direct3D 12 與 Metal，並運行於瀏覽器沙盒，讓 NVIDIA、AMD、Intel 乃至 Apple Silicon GPU 皆能「免安裝驅動」即時執行平行運算。因此，WebGPU 被視為打破硬體與作業系統藩籬的嶄新契機，有望大幅降低生物資訊工具的使用門檻，特別是在教學、臨床前端及低資源環境。
 
-## 1.2 研究動機與目的（Purpose）
+### 1.2 研究動機與目的（Purpose）
 
 雖然 WebGPU 具備「免安裝、跨硬體、資料留在本機」三大優勢，但其設計初衷仍以圖形與機器學習推論為主，高強度動態規劃演算法面臨：
 
@@ -26,7 +26,7 @@
 
 上述特性放大了 WebGPU 尚未完善的 API 與硬體限制，學界與業界對其處理生物資訊高強度工作負載的可行性仍缺乏系統性驗證。故本研究聚焦：「在瀏覽器環境下，WebGPU 能否以足夠效能執行 Pair-HMM Forward，並作為 CUDA 的實用替代？」。
 
-## 1.3 研究方法與主要結果（Methods & Results）
+### 1.3 研究方法與主要結果（Methods & Results）
 
 本研究以周育晨（2024）公開之 C++／CUDA 程式為基準對照，採以下 **三項專屬優化策略** 以對應前述瓶頸：
 
@@ -36,7 +36,7 @@
 
 在 NVIDIA RTX 2070 Super 上針對序列長度 100–100 000 測試，**WebGPU-Optimized** 相較 Baseline 加速 6.8–142×，並達到 CUDA 11–84 % 的效能；在 Apple M1 與 Intel UHD 620 上亦對純 CPU 提供 4–463× 加速（序列長度 ≥ 1 000），**Log-Likelihood 誤差低於 10⁻⁵**。
 
-## 1.4 結論與貢獻（Conclusion）
+### 1.4 結論與貢獻（Conclusion）
 
 本研究證明：只需 JavaScript 與 WGSL，即能在瀏覽器沙盒中於秒級時間完成中大型 Pair-HMM Forward 計算。三項互補之瀏覽器端優化策略有效消弭 WebGPU 的 API、同步與記憶體三大瓶頸；跨 NVIDIA、Apple、Intel 硬體的驗證顯示方法具「廠商不可知性」。此成果為「打開瀏覽器即用」的基因體分析鋪路，亦為未來 **雙精度支援 與 WASM-SIMD + WebGPU 混合加速** 奠定實證基礎。
 
@@ -65,6 +65,7 @@ JavaScript / TypeScript 透過 WebGPU API 統一介面呼叫，最終由瀏覽�
 
 #### 2.3.2 WebGPU 在高性能計算的潛力
 WebGPU 在圖形渲染與機器學習領域已展現潛力。例如，MDN Web Docs（2025）介紹 WebGPU 在遊戲渲染中的高效能表現，實現媲美原生 Vulkan 的效果；TensorFlow.js 的 WebGPU 後端則加速了瀏覽器端神經網路訓練（TensorFlow.js Team, 2024）。Google Chrome Team (2024) 指出，Transformers.js 在 WebGPU 模式下於 NVIDIA RTX 4060 Laptop 測試 BERT-base 模型時，比 WebAssembly 快 32.51 倍，顯示其高效能潛力。這些案例表明 WebGPU 的計算模型能有效利用 GPU 的平行化能力。然而，其在生物資訊的應用尚處於初步階段，主要因該領域對計算精度與記憶體存取效率要求更高。WebGPU 的 Compute Shader 與傳統 GPU 框架的異同在於其抽象層設計，雖犧牲部分低階控制，但換取跨硬體的通用性。
+
 #### 2.3.3 WebGPU 的挑戰與限制
 儘管 WebGPU 具備跨平台優勢，其在高強度運算中仍面臨挑戰。首先，瀏覽器端的 API 排程開銷較高，尤其在頻繁的 CPU-GPU 資料傳輸中（Google Chrome Team, 2024）。其次，WebGPU 僅提供 workgroupBarrier，缺乏跨 workgroup 的全域同步機制，限制其在需要複雜執行緒協調的演算法中的表現。此外，瀏覽器沙盒限制了記憶體分配與特殊函式單元（SFU）的使用，WGSL 因未內建超越函數（transcendentals，如 log/exp）而依賴軟體模擬，雖底層 GPU 可能以 SFU 執行，但仍增加計算開銷；對雙精度浮點運算（f64）的支援亦不如 CUDA 完善（Jones, 2023）。Pair-HMM Forward 的波前（wavefront）依賴性要求頻繁的記憶體存取與執行緒同步，與 WebGPU 缺乏全域同步的特性形成挑戰，增加了實現高效能平行化的難度。
 ### 2.4 WebGPU 在生物資訊的初步探索
@@ -73,9 +74,8 @@ WebGPU 在圖形渲染與機器學習領域已展現潛力。例如，MDN Web Do
 綜合上述文獻，現有研究在以下方面存在不足：首先，WebGPU 在高強度生物資訊運算（如 Pair-HMM Forward）的效能與可行性尚未被系統性驗證；其次，針對瀏覽器端 GPU 計算的瓶頸（如 CPU-GPU 往返、BindGroup 重建、全域記憶體延遲），缺乏專屬優化策略，例如，WebGPU 的 setBindGroup() 呼叫涉及 V8-Blink-Dawn-Driver 多層驗證，單次延遲約 5–15 µs，對波前演算法的多次調用構成顯著開銷；最後，跨硬體（NVIDIA、Apple、Intel）的實測數據不足，無法充分評估 WebGPU 的通用性。例如，GATK HaplotypeCaller 等主流生物資訊工具依賴 CUDA 加速，需安裝 NVIDIA 專屬驅動與 Toolkit，限制了其在教育現場或資源受限環境（如無高階 GPU 的筆記型電腦）的部署；雲端方案則因資料傳輸與隱私問題難以滿足臨床前端需求。相較之下，WebGPU 的免安裝與跨硬體特性可大幅降低門檻，實現本地高效能運算。 本研究透過移植 周育晨 (2024) 的 CUDA 程式至 WebGPU，提出三項瀏覽器端優化策略—單一 CommandBuffer 批次提交、Dynamic Uniform Offset 與 Workgroup Cache—並於多硬體平台驗證其效能與精度。此成果不僅填補 WebGPU 在生物資訊應用的研究空白，亦為「免安裝、跨硬體、資料不離端」的基因體分析工具奠定基礎。
 
 
-### 第 3 章　研究方法（Methods）
-
-#### 3.1　數學模型（Mathematical Model）
+## 第 3 章　研究方法（Methods）
+### 3.1　數學模型（Mathematical Model）
 
 本研究採用 **Pair-HMM 結合序列 Profile**。隱狀態為 Match（$M$）、Insert（$I$）、Delete（$D$），字母表 $\{A,C,G,T,-\}$。讀序列以機率矩陣
 
@@ -95,7 +95,7 @@ $$
 
 與發射基礎矩陣 $\varepsilon_{X}(x,y)$ 皆沿用周育晨（2024）公開之 C++／CUDA 程式論文設定。
 
-##### Profile 發射機率
+### Profile 發射機率
 
 $$
 e^{M}_{i,j}= \sum_{a} p_{i,a}\,\varepsilon_{M}(a,h_j),
@@ -107,7 +107,7 @@ $$
 
 ---
 
-#### 3.2　Pair-HMM Forward 演算法
+### 3.2　Pair-HMM Forward 演算法
 
 1. **初始化**
 
@@ -140,82 +140,88 @@ $$
 
 4. **時間複雜度** 為 $\mathcal{O}(mn)$。
 
----
+### 3.3 系統設計與實作（System Design and Implementation）
 
-#### 3.2 系統設計與實作（System Design and Implementation）
-
-##### 3.2.1 C++／CUDA 版
+#### 3.3.1 C++／CUDA 版
 
 在前人工作已證實 CUDA 能以反對角線平行化高效實現 Pair-HMM 後，本研究**接手並調整周育晨（2024）公開之 C++／CUDA 程式**，將其原始雙精度 `double` 改為單精度 `float`，以建立與 WebGPU 版本可對等比較的「效能上限」對照組。由於 WebGPU 目前僅保證 f32 運算，若 CUDA 仍維持 f64，跨平台結果將被精度差異稀釋。經將單精度輸出與原始雙精度比對，長度 $N=10^{5}$ 時最大相對誤差僅 $2.18\times10^{-1}\%$，足以滿足後續 WebGPU 對照的精度門檻。首先，我們沿用「每條反對角線觸發一次 kernel」的結構；此設計雖需發射 \$2N\$ 次 kernel，但可藉由 `cudaDeviceSynchronize()` 在相鄰反對角線間形成 GPU-wide barrier，確保跨 thread-block 之資料相依完全滿足。如此一來，矩陣遞迴公式中左、上、左上的依賴便能以最直觀的方式映射至裝置端。
 
 然而，僅有全域同步仍不足以隱藏記憶體延遲，因此在 block 內部我們維持 `__syncthreads()` 的微同步，讓每 32 threads 共享快取中的前一行結果後再進入下一輪計算。與此同時，對三條動態規劃陣列 \$M, I, D\$，我們採用主機端的「四行指標輪替」技巧，亦即固定配置四個長度 \(n+1\) 的緩衝區，並在 host 迴圈透過指標交換完成 `prev → curr → new` 的遞補；由於 CUDA 指標可被當作一般 C 指標操控，此做法免除了重新配置或 memcpy 的成本，最大化 PCIe／NVLink 帶寬的有效利用率。此結構同時為後續 WebGPU 移植鋪路：一旦進入瀏覽器環境失去可變指標，我們便需以 BindGroup 重建或 Dynamic Offset 取而代之。
 
-![4. 全域同步差異圖](https://hackmd.io/_uploads/r19f4fsWeg.png)
-圖 3-5　CUDA 與 WebGPU 在全域同步上的差異
-CUDA 可於裝置端 kernel-return 插入 GPU-wide barrier；WebGPU 必須回到 JavaScript 重新 dispatch 才能觸發全域同步。
+#### 3.3.2 WebGPU Baseline
 
-### 3.2.2 WebGPU Baseline
+##### (一) 從 CUDA「多次 Kernel」到 WebGPU「多次 dispatch」
 
-#### (一) 從 CUDA「多次 Kernel」到 WebGPU「多次 dispatch」
+Pair-HMM Forward 的計算沿反對角線 (wavefront) 逐步推進，每條 wavefront 必須等前一條完全結束後才能繼續。CUDA 最直接的作法是在主機程式中用 `for` 迴圈連續啟動 kernels，並在兩次 kernel 之間呼叫 `cudaDeviceSynchronize()`——如 **圖 3-1** 所示，Synchronization 點始終留在 **GPU 內部**；反觀 WebGPU 缺乏裝置端全域 barrier，若要同步只能回到 JavaScript 重新 `dispatch`，因此對長度為 $N$ 的序列勢必產生 **$2N$ 次 CPU↔GPU 往返**，成為 Baseline 的第一個瓶頸。
 
-Pair-HMM Forward 的計算沿著動態規畫矩陣的反對角線 (wavefront) 逐步推進。每條 wavefront 必須等前一條全部完成後才能繼續。CUDA 最直觀的作法是在主機程式裡用 for 迴圈連續啟動 Kernel, 並在兩次 Kernel 之間呼叫 cudaDeviceSynchronize()。這相當於在 GPU 端插入全域 barrier, 同時讓主機程式得以安全交換三條 DP 指標。為確保計算正確性，Baseline 採用單一 compute pass 模擬 CUDA 的全域同步，雖犧牲部分效能，但簡化了移植流程。
-然而移植到 WebGPU 時, WGSL 只有 workgroupBarrier(), 並無跨 workgroup 的同步原語, Shader 也無法像 CUDA Dynamic Parallelism 那樣在裝置端再啟動子工作負載。於是 **每一條反對角線都得由 JavaScript 端重新發起一次 dispatchWorkgroups()**。主機呼叫 queue.submit() 送出上一條 wavefront 後, 還得等待 device.queue.onSubmittedWorkDone() 才能更新 uniform 並提交下一個 dispatch。對長度 N 的序列而言, 這代表整體需要 **2N 次 dispatch, 也就有 2N 次 CPU↔GPU 往返**, 同步延遲完全暴露在 JavaScript 執行緒, 形成 Baseline 的第一個瓶頸。
+![global\_sync](https://hackmd.io/_uploads/r19f4fsWeg.png)
+**圖 3-1　CUDA 與 WebGPU 全域同步機制比較**
+CUDA 可於 GPU 端插入 *global* barrier；WebGPU 必須回到 Host 端重新 `dispatch` 才能觸發全域同步。
 
-#### (二) 指標輪替與 BindGroup 的不可變性
+主機呼叫 `queue.submit()` 送出上一條 wavefront 後，還得等待 `device.queue.onSubmittedWorkDone()` 才能更新 uniform 並提交下一個 dispatch。對 $N=10^{5}$ 的序列而言，這意味著將呼叫 **20 萬次 `submit → await`**，同步延遲完全暴露在 JavaScript 執行緒，效能因而大幅受限。
 
-CUDA 只需在兩條 wavefront 之間交換三個 float\* 指標, 就能把 prev → curr → new 的角色依序推移, 驅動層無須重新配置資源。相對地, WebGPU 的 Buffer 綁定點在 **BindGroup 建立時即被鎖定**。若想讓下一條 wavefront 讀取新的 DP Buffer, 就只能重新呼叫 device.createBindGroup(), 把相同 binding slot 指向新的 GPUBuffer。這一過程會歷經 V8 → Blink → Dawn → Driver 等層層驗證, 單次耗時約 10–50 µs; 在 2N 次迴圈裡反覆執行, 累計延遲動輒數十秒, 因而出現第二個瓶頸。
 
-![3. WebGPU 多層 IPC／驗證路徑](https://hackmd.io/_uploads/SJi1Nfi-gl.png)
-圖 3-4　WebGPU Storage Buffer 綁定的多層 IPC / 驗證路徑與 CUDA 直接 Host→VRAM 相比，WebGPU 需歷經 JavaScript 執行緒→GPU Process→Driver IPC→VRAM 多段複製或驗證，導致單次 createBindGroup 延遲 5–15 µs。
+##### (二) 指標輪替與 BindGroup 的不可變性
 
-#### (三) Shared memory 的缺席與高延遲 storage buffer 存取
+CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `prev → curr → new` 的角色依序推移，驅動層無須重新配置資源。相對地，WebGPU 的 Buffer 綁定點在 **BindGroup 建立時即被鎖定**。若想讓下一條 wavefront 讀取新的 DP Buffer，就只能重新呼叫 `device.createBindGroup()`，把相同 binding slot 指向新的 `GPUBuffer`。這一過程會歷經 **V8 → Blink → Dawn → Driver** 多層驗證，單次耗時約 5–15 µs；**如圖 3-2 所示，WebGPU 在一次 `createBindGroup()` 呼叫中須通過「JavaScript 執行緒 → GPU Process → Driver IPC」等多段傳遞，導致當 $N=10^{5}$ 時累積延遲動輒數十秒，成為 Baseline 的第二個瓶頸。**
+
+![ipc\_path](https://hackmd.io/_uploads/SJi1Nfi-gl.png)
+**圖 3-2　WebGPU Storage Buffer 綁定的多層 IPC／驗證路徑**
+相較 CUDA 直接「Host→VRAM」，WebGPU 額外經過三層橋接與驗證，令單次 `createBindGroup()` 延遲提升至 5–15 µs。
+
+
+##### (三) Shared memory 的缺席與高延遲 storage buffer 存取
 
 在 CUDA 實作中, 九個 Transition 係數與七十五個 Emission 係數可預先載入 48 KB shared memory, 之後所有執行緒以約 80 ns 的延遲重複存取。雖然 WGSL 也支援 var<workgroup>, 但容量有限且必須由 Shader 手動搬運。Baseline 為求驗證正確性, 乾脆把小矩陣保留在 storage buffer。結果是每格計算需重複進行 6–9 次 global read, 單次延遲約 300 ns, 遠高於 shared memory, 這成了第三個瓶頸。
 
-#### (四) Baseline 的暫行折衷
+##### (四) Baseline 的暫行折衷
 
 面對上述限制, Baseline 採取三項折衷措施。首先, 以「一次 compute pass 對應一條 wavefront」的方法, 用 GPU 指令天然序列化效果替代 cudaDeviceSynchronize(), 確保計算順序。其次, 在每條 wavefront 重新建立 BindGroup, 以顯式切換三顆 DP Buffer 的角色, 雖有 API 開銷, 卻能保證 Shader 讀寫方向正確。最後, 為避免額外負擔, Baseline 只在初始化階段建立一支 ComputePipeline, 全程重用同一 ComputePassEncoder, 至少省下重複編譯 WGSL 與重新產生 Pipeline State 的成本。
 
-#### (五) Baseline 效能概況
+##### (五) Baseline 效能概況
 
 在 NVIDIA RTX 2070 Super 上, 當序列長度 N = 100 000 時, Baseline 版本耗時 466 秒, 較同卡上的 CUDA 實作慢約兩個數量級。深入分析可知, 延遲主要來自「2N 次 IPC 同步」「2N 次 BindGroup 生成」以及「頻繁 storage buffer 讀取」。此結果清楚揭示 WebGPU 與 CUDA 架構差異的三個瓶頸, 也界定了下一節將提出的三項優化策略: **減少 Host↔GPU 往返、最小化 BindGroup 變動, 以及將熱點資料搬入 var<workgroup> 快取**。
 
 
-### 3.2.3 WebGPU 優化版（本研究）
+#### 3.3.3 WebGPU 優化版（本研究）
 
 為真正解決 Baseline 在 (1) 頻繁主機同步、(2) 重複 BindGroup 建構、(3) 高延遲 storage 存取這三項瓶頸，我們依序導入「單一 CommandBuffer 批次提交」、「Dynamic Uniform Offset」與「Workgroup Cache」三種瀏覽器端優化策略。以下先簡介 WebGPU 的指令錄製與提交機制，隨後逐一說明各策略的設計動機、實作細節與實驗成效。
 
 ---
 
-#### 3.2.3.1 單一 CommandBuffer 批次提交──降低 CPU–GPU 往返
+##### 3.3.3.1 單一 CommandBuffer 批次提交──降低 CPU–GPU 往返
+
+如 **圖 3-3** 所示，我們將原本 2 N 次 `dispatchWorkgroups` 先錄進同一支 `CommandBuffer`，最終僅以一次 `queue.submit()` 送交 GPU，實測可消除超過 99.99 % 的 IPC 往返延遲。
 
 **CommandEncoder 與指令流。** 在 WebGPU 中，`CommandEncoder` 負責錄製 `beginComputePass`、`dispatchWorkgroups`、`copyBufferToBuffer`、`end` 等命令。當呼叫 `encoder.finish()` 產生 `GPUCommandBuffer` 並以 `device.queue.submit([commandBuffer])` 提交後，GPU 會依序執行所有已錄製指令而無需 CPU 介入。只有在程式刻意呼叫 `await device.queue.onSubmittedWorkDone()` 時，JavaScript 執行緒才會同步等待整條指令流完成。
 
-**傳統多次提交的痛點。** Baseline 為了維持對角線依賴，使用 `for` 迴圈逐條建構 encoder、`submit`、`await`，再動態重建下一條 encoder。對長度 N 的序列將產生 2N 次 「submit–barrier–encoder」 流程。每次等待不僅引發 CPU–GPU IPC 與瀏覽器排程延遲，也迫使 JavaScript 執行緒反覆進入 idle/active 狀態，整體開銷顯著。
+**傳統多次提交的痛點。** Baseline 為了維持對角線依賴，使用 `for` 迴圈逐條建構 encoder、`submit`、`await`，再動態重建下一條 encoder。對長度 N 的序列將產生 2 N 次「submit–barrier–encoder」流程。每次等待不僅引發 CPU–GPU IPC 與瀏覽器排程延遲，也迫使 JavaScript 執行緒反覆進入 idle/active 狀態，整體開銷顯著。
 
-**一次性指令流的優勢。** 我們保留對角線分段的程式邏輯，但僅在錄製階段多次 `beginComputePass`，最後只 submit 一次。如此 GPU 得以從頭到尾連續執行，CPU 無須插入同步；驅動驗證與排程成本大幅下降；`dispatch` 與 `copy` 命令連續排列也使 DRAM 流量更平穩。實驗顯示，把 2N 次 IPC 壓縮為 1 次後，總執行時間可明顯縮短。
+**一次性指令流的優勢。** 本研究保留對角線分段邏輯，但僅在錄製階段多次 `beginComputePass`，最後只 `submit` 一次。如此 GPU 得以從頭到尾連續執行，CPU 無須插入同步；驅動驗證與排程成本大幅下降；`dispatch` 與 `copy` 命令連續排列亦使 DRAM 流量更平穩。將 2 N 次 IPC 壓縮為 1 次後，總執行時間明顯縮短，證實批次提交的效益。
 
-![1. 單一 CommandBuffer 示意圖](https://hackmd.io/_uploads/BkGH7Mo-ee.png)
-圖 3-6　單一 CommandBuffer 批次提交流程
-主機（Host）先於指令錄製階段將多個 dispatch 收攏至同一 CommandBuffer，隨後一次性 submit 至 GPU 執行，省去 2 N 次 IPC 與排程開銷。
-    
----
-
-#### 3.2.3.2 Dynamic Uniform Offset──減少常量更新成本
-
-**多小 buffer 與重複 BindGroup 問題。** Baseline 在每條對角線都需重建 BindGroup 以切換 dpPrev、dpCurr、dpNew 與各類常量 buffer，單次 `createBindGroup` 必經 V8 → Blink → Dawn 多層驗證，耗時 5–15 µs，長度 N=10⁵ 時累積延遲達數秒。
-
-**大型 Uniform Buffer 與動態偏移。** WebGPU 允許在 `setBindGroup` 傳入 dynamic offset（256 B 對齊）。我們將 per-diag 常量（如 len、diag、numGroups）預先塞入一顆連續 Uniform buffer，只需傳入 `offset(diag)=(diag-1)*UB_ALIGN` 即可。常量綁定得以重用，僅剩三顆 DP buffer 需要更新，重建成本由「每回合 10+ 項 binding」降至「3 項 binding」，平均延遲減半。
-
-![2. Dynamic Offset 佈局圖](https://hackmd.io/_uploads/BkEtmfsbxl.png)
-圖 3-7　Dynamic Uniform Offset 資料佈局
-將每條反對角線的常量（len, diag, numGroups）以 256 B 為對齊單位連續存放；dispatch 時僅改變 offset 而無須重建 BindGroup。
-    
-**緩衝區合併與記憶體連續性。** 進一步把 readProb、haplotype、transition、emission 等分散資料重排成單一結構化大 buffer，Shader 以固定偏移載入，減少 VRAM 碎片並提升 L2 命中率。
+![cmd\_buffer](https://hackmd.io/_uploads/BkGH7Mo-ee.png)
+**圖 3-3　單一 CommandBuffer 批次提交流程**
+多條 wavefront 的 `dispatchWorkgroups` 先於 Host 端錄製入同一 `CommandBuffer`，最終一次 `queue.submit()` 送交 GPU，省卻 2 N 次 IPC 與排程開銷。
 
 ---
+##### 3.3.3.2 Dynamic Uniform Offset──減少常量更新成本
 
-#### 3.2.3.3 Workgroup Cache──將熱常數搬離 DRAM
+如 **圖 3-4** 所示，我們將每條反對角線 (diag) 的常量 (len, diag, numGroups) 以 256 B 對齊連續排入單顆 UBO，`dispatch` 時僅靠 dynamic offset 切換；此舉使 BindGroup 重建次數從「每回合 10+」降至 3，單次延遲減半並大幅削弱 Baseline 的第二瓶頸。
+
+**多小 buffer 與重複 BindGroup 問題。** Baseline 在每條對角線都需重建 BindGroup 以切換 `dpPrev / dpCurr / dpNew` 與各類常量 buffer，單次 `createBindGroup()` 必經 **V8 → Blink → Dawn** 多層驗證，耗時 5–15 µs；當 $N=10^{5}$ 時，累積延遲達數秒。
+
+**大型 Uniform Buffer 與動態偏移。** WebGPU 允許在 `setBindGroup()` 傳入 dynamic offset (256 B 對齊)。因此我們將上述常量預先塞入 UBO，只需計算
+`offset(diag) = (diag − 1) × UB_ALIGN` 即可切換；重建成本由「每回合 10+ 項 binding」降至「3 項 binding」，平均延遲減半。
+
+![dyn\_offset](https://hackmd.io/_uploads/BkEtmfsbxl.png)
+**圖 3-4　Dynamic Uniform Offset 資料佈局**
+每條反對角線常量 (len, diag, numGroups) 以 256 B 為對齊單位連續存放；`dispatch` 時僅調整 dynamic offset，無須重建 BindGroup。
+
+
+
+---
+
+##### 3.3.3.3 Workgroup Cache──將熱常數搬離 DRAM
 
 **Baseline 的高延遲問題。** 在 Baseline 中，WGSL 對 `var<storage>` 的讀取繞過 L1，單次延遲約 150 ns。每格計算需重複讀取 7 個 transition 與 8 個 emission，造成 DRAM 壅塞。
 
@@ -224,10 +230,9 @@ CUDA 只需在兩條 wavefront 之間交換三個 float\* 指標, 就能把 prev
 **效能與能源效益。** Workgroup Cache 有效削減 DRAM 帶寬波動；因 `var<workgroup>` 為 WGSL 標準功能，此技巧在 NVIDIA、Intel、Apple 平台皆可直接移植。
 
 ---
+##### 3.3.3.4 小結
 
-#### 3.2.3.4 小結
-
-整合三項優化後，我們：
+如 **表 3-1** 所示，將「單一 CommandBuffer 批次提交」「Dynamic Uniform Offset」與「Workgroup Cache」三項瀏覽器端優化同時啟用後，所有與 CPU–GPU 互動及記憶體存取相關的指標均大幅下降，最終在 RTX 2070 Super 上把執行時間從 466 s 壓縮到 74 s。
 
 | 指標                  |  Baseline  | Optimized |     降幅     |
 | ------------------- | :--------: | :-------: | :--------: |
@@ -236,7 +241,9 @@ CUDA 只需在兩條 wavefront 之間交換三個 float\* 指標, 就能把 prev
 | Storage Buffer 讀取／格 |    6 – 9   |     1     |   − 83 %   |
 | 執行時間（N = 100 000）   |    466 s   |    74 s   |   − 84 %   |
 
-在 RTX 2070 Super 上，WebGPU 優化版對長度 100 000 的序列僅比 CUDA 慢 19 %，且仍較單執行緒 CPU 快近千倍，證實本策略能在瀏覽器沙盒中提供接近原生 GPU 的效能。
+表 3-1　三項瀏覽器端優化對 Baseline 的效能改善概覽
+
+在 RTX 2070 Super 上，WebGPU-Optimized 版本對長度 100 000 的序列僅比 CUDA 慢 19 %，但相對單執行緒 CPU 仍快近千倍，證實本策略能在瀏覽器沙盒中提供接近原生 GPU 的效能。
 
 
 ## 第 4 章　實驗與結果（Results）
