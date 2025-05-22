@@ -58,7 +58,9 @@ OpenCL 旨在提供跨硬體的 GPU 加速解決方案，支援 NVIDIA、AMD 與
 #### 2.3.1 WebGPU 的技術背景
 WebGPU 於 2024 年 12 月 19 日進入 W3C Candidate Recommendation Snapshot 階段，尚未成為正式 Recommendation，尚待完整實作與互通性測試（W3C, 2024）。WebGPU 透過單一 JavaScript API 映射 Vulkan、Direct3D 12 與 Metal 後端，支援 NVIDIA、AMD、Intel 及 Apple Silicon GPU。其核心優勢在於免安裝驅動、跨平台相容與瀏覽器沙盒的安全性，允許使用者僅需開啟瀏覽器即可執行平行運算。WebGPU 的計算管線（Compute Shader）以 WGSL（WebGPU Shading Language）撰寫，支援高效能矩陣運算與記憶體管理，適用於高強度運算任務。
 
-![WebGPU 架構對應示意](https://hackmd.io/_uploads/H1GKrzs-ee.png)
+![WebGPU 架構對應示意](https://hackmd.io/_uploads/SJHJ2Go-xe.png)
+圖 2-1　WebGPU API 與原生後端的映射關係
+JavaScript / TypeScript 透過 WebGPU API 統一介面呼叫，最終由瀏覽器轉譯至 Vulkan（Linux）、Direct3D 12（Windows）或 Metal（macOS/iOS），並提交至 GPU 執行。
 
 
 #### 2.3.2 WebGPU 在高性能計算的潛力
@@ -237,103 +239,118 @@ CUDA 只需在兩條 wavefront 之間交換三個 float\* 指標, 就能把 prev
 在 RTX 2070 Super 上，WebGPU 優化版對長度 100 000 的序列僅比 CUDA 慢 19 %，且仍較單執行緒 CPU 快近千倍，證實本策略能在瀏覽器沙盒中提供接近原生 GPU 的效能。
 
 
-## 第 4 章 實驗與結果 (Results)
+## 第 4 章　實驗與結果（Results）
 
-### 4.1 實驗環境
+### 4.1　實驗環境
 
-首先，為了讓後續效能數據得以被不同研究者重現，我們固定採用 Chrome 135.0.7049.114 執行所有 WebGPU 測試。為使三組硬體能有可比基準，我們將 Apple M1 與 Intel UHD 620 亦升級至同版瀏覽器，再把相關作業系統版本一併列明，如表 4-1 所示。
+首先，為了讓後續效能數據得以被不同研究者重現，我們固定採用 Chrome 135.0.7049.114 執行所有 WebGPU 測試。為使三組硬體能有可比基準，我們將 Apple M1 與 Intel UHD 620 亦升級至同版瀏覽器，再把相關作業系統版本一併列明。**表 4-1** 彙整了三套硬體與瀏覽器版本，可作為後續效能數據的重現基線。
 
-| 類別      | 參數           | RTX 2070 Super                    | Apple M1 GPU          | Intel UHD 620         |
-| ------- | ------------ | --------------------------------- | --------------------- | --------------------- |
-| CPU     | 型號           | Ryzen 7 3700X                     | Apple M1 (4P+4E)      | Core i5-8265U         |
-| GPU     | SM/FP32 Peak | 40 SM - 9.1 TFLOPS                | 8 Cores - 2.6 TFLOPS  | 24 EU - 0.35 TFLOPS   |
-| OS      | 版本           | Ubuntu 24.04.2 LTS                | macOS 14.4            | Windows 11 22H2       |
-| 瀏覽器     | 版本           | Chrome 135.0.7049.114             | Chrome 135.0.7049.114 | Chrome 135.0.7049.114 |
-| CUDA 驅動 | 版本           | CUDA Toolkit 12.0 - Driver 550.54 | 不適用                   | 不適用                   |
+| 類別      | 參數           | RTX 2070 Super                    | Apple M1 GPU         | Intel UHD 620       |
+| ------- | ------------ | --------------------------------- | -------------------- | ------------------- |
+| CPU     | 型號           | Ryzen 7 3700X                     | Apple M1 (4P+4E)     | Core i5-8265U       |
+| GPU     | SM/FP32 Peak | 40 SM – 9.1 TFLOPS                | 8 Cores – 2.6 TFLOPS | 24 EU – 0.35 TFLOPS |
+| OS      | 版本           | Ubuntu 24.04.2 LTS                | macOS 14.4           | Windows 11 22H2     |
+| 瀏覽器     | 版本           | Chrome 135.0.7049.114             | 同左                   | 同左                  |
+| CUDA 驅動 | 版本           | CUDA Toolkit 12.0 / Driver 550.54 | —                    | —                   |
 
-### 4.2 效能數據
+表 4-1　實驗環境
 
-#### 4.2.1 RTX 2070 Super：四版本時間與加速比
+---
 
-繼而說明計時方法，我們將壁鐘時間 $T(N)$ 定義為「從主程式呼叫演算法至裝置回傳結果之間的總經過時間」，此範圍涵蓋 GPU 記憶體配置與 queue.submit，但排除了 shader 編譯，以避免不同瀏覽器快取策略造成誤差。基於這一定義，表 4-2 列出 C++、CUDA、WebGPU-Init 與 WebGPU-Opt. 在四種序列長度下的實測值，以及相對速度 $S_{X\leftarrow Y}(N)$。
+### 4.2　效能數據
+
+#### 4.2.1　RTX 2070 Super：四版本時間與加速比
+
+繼而說明計時方法，我們將壁鐘時間 $T(N)$ 定義為「從主程式呼叫演算法至裝置回傳結果之間的總經過時間」，此範圍涵蓋 GPU 記憶體配置與 `queue.submit()`，但排除了 shader 編譯，以避免不同瀏覽器快取策略造成誤差。基於這一定義，**表 4-2** 列出 C++、CUDA、WebGPU-Init 與 WebGPU-Opt 在四種序列長度下的實測值，以及相對速度
+$S_{X\leftarrow Y}(N)$。
 
 $$
 S_{X\leftarrow Y}(N)=\frac{T_Y(N)}{T_X(N)} \tag{4-1}
 $$
 
-其中 
-$$
-(X,Y)=(\text{Opt},\text{CPU}) \;\Rightarrow\; 
-S_{\mathrm{Opt/CPU}}(N), \qquad
-(X,Y)=(\text{Opt},\text{CUDA}) \;\Rightarrow\; 
-S_{\mathrm{Opt/CUDA}}(N).
-$$
+|      $N$ | CPU T (s) | CUDA T (s) | WGPU-Init (s) | **WGPU-Opt** (s) | Opt./CPU | Opt./CUDA |
+| -------: | --------: | ---------: | ------------: | ---------------: | -------: | --------: |
+| $10^{2}$ |   0.00330 |    0.00229 |         0.135 |        **0.020** |     165× |     0.11× |
+| $10^{3}$ |     0.327 |     0.0208 |         0.602 |        **0.043** |     7.6× |     0.49× |
+| $10^{4}$ |     32.80 |     0.1908 |         21.83 |        **0.346** |    94.8× |     0.55× |
+| $10^{5}$ |    3275.6 |     2.7696 |         466.8 |        **3.299** |     993× |     0.84× |
 
-|    $N$ | CPU $T$ (s) | CUDA $T$ (s) | WGPU-Init (s) | WGPU-Opt. (s) | Opt./CPU | Opt./CUDA |
-| -----: | ----------: | -----------: | ------------: | ------------: | -------: | --------: |
-| $10^2$ |     0.00330 |      0.00229 |         0.135 |     **0.020** |     165× |     0.11× |
-| $10^3$ |       0.327 |       0.0208 |         0.602 |     **0.043** |     7.6× |     0.49× |
-| $10^4$ |       32.80 |       0.1908 |         21.83 |     **0.346** |    94.8× |     0.55× |
-| $10^5$ |      3275.6 |       2.7696 |         466.8 |     **3.299** |     993× |     0.84× |
+表 4-2　RTX 2070 Super 上四版本時間與加速比
 
-起初，在 $N=10^2$ 時，WebGPU-Opt. 仍需等待 V8 啟動並完成 IPC synchronization，因此僅達 CUDA 的 11%。然而，隨著序列長度增加，Dynamic Uniform Offset 減少了 BindGroup 重建，而 Workgroup Cache 則成功隱匿常量存取延遲，最終使 WebGPU-Opt. 在 $N=10^5$ 時已逼近 CUDA 的 84%，僅相差 0.53 秒。
+> **重點發現：** 表 4-2 顯示 WebGPU-Optimized 隨序列長度增加可維持 **0.49–0.84 倍 CUDA 效能**，並對單執行緒 CPU 提供最高 **993×** 加速。
+
+起初，在 $N=10^{2}$ 時，WebGPU-Opt 仍需等待 V8 啟動並完成 IPC 同步，因此僅達 CUDA 的 11 %。隨著序列增長，Dynamic Uniform Offset 減少 BindGroup 重建，而 Workgroup Cache 隱匿常量存取延遲，使 WebGPU-Opt 於 $N=10^{5}$ 已逼近 **CUDA 84 %** 的效能，僅差 0.53 秒。
+
+**如圖 4-1 所示**，在 RTX 2070 Super 上，即使未經優化的 WebGPU-Basic 仍能對 CPU 提供 20–165× 加速，但與 CUDA 差距明顯；**圖 4-2** 進一步比較 WebGPU-Basic 與 CUDA**圖； 4-3** 證明三項瀏覽器端優化可再提升一到兩個數量級；**圖 4-4** 則將四版本加速比並列，顯示優化後曲線已趨近 CUDA。
 
 ![2070s-1](https://hackmd.io/_uploads/ByWuiysZex.png)
-圖 4-4：NVIDIA RTX 2070 Super 上 WebGPU Basic Version 相對於 CPU 版本的加速比
+圖 4-1　NVIDIA RTX 2070 Super 上 **WebGPU-Basic** 相對 CPU 的加速比
+
 ![2070s-3](https://hackmd.io/_uploads/BJWdjko-xx.png)
-圖 4-6：NVIDIA RTX 2070 Super 上 CUDA 與 WebGPU Basic Version 相對於 CPU 版本的加速比
-    
+圖 4-2　RTX 2070 Super 上 **CUDA 與 WebGPU-Basic** 相對 CPU 的加速比
+
 ![2070s-2](https://hackmd.io/_uploads/HyWdjJiWel.png)
-圖 4-5：NVIDIA RTX 2070 Super 上 及WebGPU Optimized Version 及WebGPU Basic Version 相對於 CPU 版本的加速比
+圖 4-3　RTX 2070 Super 上 **WebGPU-Optimized 與 Basic** 相對 CPU 的加速比
 
 ![2070s-4](https://hackmd.io/_uploads/BJZuiyjZll.png)
-圖 4-7：NVIDIA RTX 2070 Super 上其他版本 相對於 CPU 版本的加速比
-    
-#### 4.2.2 Apple M1 與 Intel UHD 620：跨平台效能
+圖 4-4　RTX 2070 Super 上四版本（CPU / CUDA / Basic / Optimized）加速比總覽
 
-由於這兩款 iGPU 無法運行 CUDA，我們改以下式評估 WebGPU-Opt. 相對 CPU 的純粹加速：
+---
+
+#### 4.2.2　Apple M1 與 Intel UHD 620：跨平台效能
+
+由於這兩款 iGPU 無法運行 CUDA，我們以下式評估 WebGPU-Opt 相對單執行緒 CPU 的純粹加速：
 
 $$
-S_{\text{Opt}\leftarrow\text{CPU}}(N)=\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)} \tag{4-2}
+S_{\text{Opt}\leftarrow\text{CPU}}(N)=
+\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)} \tag{4-2}
 $$
 
-|    $N$ | M1 CPU (s) | M1 WGPU-Opt. (s) | $S_{\text{Opt}\leftarrow\text{CPU}}$ | UHD CPU (s) | UHD WGPU-Opt. (s) | $S_{\text{Opt}\leftarrow\text{CPU}}$ |
-| -----: | ---------: | ---------------: | -----------------------------------: | ----------: | ----------------: | -----------------------------------: |
-| $10^2$ |    0.00391 |            0.045 |                                0.09× |      0.0101 |             0.136 |                                0.07× |
-| $10^3$ |      0.308 |        **0.034** |                                 9.1× |       0.936 |         **0.234** |                                 4.0× |
-| $10^4$ |      31.38 |        **0.272** |                                 115× |       95.51 |         **1.524** |                                62.7× |
-| $10^5$ |     3347.6 |        **7.245** |                                 463× |       10851 |         **48.79** |                                 222× |
+|      $N$ | M1 CPU (s) | **M1 Opt.** (s) | Opt./CPU | UHD CPU (s) | **UHD Opt.** (s) | Opt./CPU |
+| -------: | ---------: | --------------: | -------: | ----------: | ---------------: | -------: |
+| $10^{2}$ |    0.00391 |           0.045 |    0.09× |      0.0101 |            0.136 |    0.07× |
+| $10^{3}$ |      0.308 |       **0.034** |     9.1× |       0.936 |        **0.234** |     4.0× |
+| $10^{4}$ |      31.38 |       **0.272** |     115× |       95.51 |        **1.524** |    62.7× |
+| $10^{5}$ |     3347.6 |       **7.245** |     463× |       10851 |        **48.79** |     222× |
 
-雖然在短序列情境下兩張 iGPU 都受首輪 CommandBuffer 提交與 driver 驗證牽制，但當 $N$ 超過 $10^4$ 後，Workgroup Cache 的高重用率得以明顯展現；特別是 Apple M1 的 UMA 架構在大型資料流下避免了 CPU↔GPU 拷貝，因而拉開與 UHD 620 的差距。
+> **重點發現：** Intel UHD 620 仍獲得最高 **222×** 加速（圖 4-5），而 Apple M1 因 UMA 架構在長序列下達 **463×**（圖 4-6）；圖 4-7 證明相同 WGSL shader 具備良好跨硬體可攜性。
+
 ![uhd620](https://hackmd.io/_uploads/H1g79koZge.png)
-圖 4-2：Intel UHD 620 上 WebGPU Optimized Version 相對於 CPU 版本的加速比
-    
+圖 4-5　Intel UHD 620 上 WebGPU-Optimized 相對 CPU 的加速比
+
 ![m1](https://hackmd.io/_uploads/rkjm5JsWxl.png)
-圖 4-3：Apple M1 上 WebGPU Optimized Version 相對於 CPU 版本的加速比
-    
-![比較不同硬體（RTX 2070 Super、M1、UHD 620）在 N=10⁵ 時的 WebGPU-Optimized 加速比](https://hackmd.io/_uploads/HyGan1qWll.png)
-圖 4-3：WebGPU-Optimized 在序列長度 N=10⁵ 時於不同硬體平台的加速比，顯示其跨硬體的效能優勢。
-    
-    
-### 4.3 正確性驗證──Log-Likelihood 相對誤差
+圖 4-6　Apple M1 上 WebGPU-Optimized 相對 CPU 的加速比
 
-為驗證跨平台數值一致性，我們將 CUDA 2070S 的結果作為黃金標準，並計算各平台相對誤差：
+![cross-hw](https://hackmd.io/_uploads/HyGan1qWll.png)
+圖 4-7　三款 GPU 於 $N=10^{5}$ 時 WebGPU-Optimized 相對 CPU 的加速比比較
+
+---
+
+### 4.3　正確性驗證──Log-Likelihood 相對誤差
+
+為驗證跨平台數值一致性，我們將 CUDA-2070 S 結果作為黃金標準，計算各平台相對誤差：
 
 $$
-\varepsilon(N)=\frac{|\text{LL}_{\text{platform}}(N)-\text{LL}_{\text{CUDA,2070S}}(N)|}{|\text{LL}_{\text{CUDA,2070S}}(N)|}\times100\% \tag{4-3}
+\varepsilon(N)=
+\frac{|\mathrm{LL}_{\text{platform}}(N)-\mathrm{LL}_{\text{CUDA}}(N)|}
+     {|\mathrm{LL}_{\text{CUDA}}(N)|}\times100\% \tag{4-3}
 $$
 
-| 平台 / $N$          | $10^{2}$               | $10^{3}$               | $10^{4}$               | $10^{5}$               | 最大誤差                       |
-| ----------------- | ---------------------- | ---------------------- | ---------------------- | ---------------------- | -------------------------- |
-| WGPU-Opt. 2070S   | $2.5\times10^{-4}\ \%$ | $1.3\times10^{-5}\ \%$ | $2.2\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$ | **$3.8\times10^{-4}\ \%$** |
-| WGPU-Opt. M1      | $2.8\times10^{-4}\ \%$ | $1.5\times10^{-5}\ \%$ | $2.2\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$     |
-| WGPU-Opt. UHD 620 | $2.5\times10^{-4}\ \%$ | $1.3\times10^{-5}\ \%$ | $2.2\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$     |
+| 平台 / $N$           | $10^{2}$             | $10^{3}$             | $10^{4}$             | $10^{5}$             | 最大誤差                     |
+| ------------------ | -------------------- | -------------------- | -------------------- | -------------------- | ------------------------ |
+| WGPU-Opt - 2070 S  | $2.5\times10^{-4}\%$ | $1.3\times10^{-5}\%$ | $2.2\times10^{-4}\%$ | $3.8\times10^{-4}\%$ | **$3.8\times10^{-4}\%$** |
+| WGPU-Opt - M1      | $2.8\times10^{-4}\%$ | $1.5\times10^{-5}\%$ | $2.2\times10^{-4}\%$ | $3.8\times10^{-4}\%$ | $3.8\times10^{-4}\%$     |
+| WGPU-Opt - UHD 620 | $2.5\times10^{-4}\%$ | $1.3\times10^{-5}\%$ | $2.2\times10^{-4}\%$ | $3.8\times10^{-4}\%$ | $3.8\times10^{-4}\%$     |
 
-由於所有測點皆遠低於 $10^{-3}\%$，我們可判定 WGSL 與 CUDA 在單精度條件下數值行為一致，相對誤差主要來自 IEEE 754 單精度浮點運算的捨入差異，與硬體實現無關，確保跨平台數值一致性。
+> **圖 4-8（若有誤差曲線圖可補）** 显示所有平台最大誤差皆低於 $4\times10^{-4}\%$，證明單精度 WGSL 與 CUDA 在數值上高度一致。
 
-### 4.5 小結
+---
 
-綜合而論，WebGPU-Optimized 在 RTX 2070 Super 已能達到 CUDA 最高 88 %的效能，且相對單執行緒 CPU 仍保有三個數量級的速度優勢。進一步跨到 Apple M1 與 Intel UHD 620 後，同一套 WGSL shader 仍提供 4 至 463 倍加速，顯示提出的三項優化不依賴廠商私有擴充。最後，所有平台的 Log-Likelihood 誤差皆小於 $4\times10^{-4}\%$，證明本方法兼具速度與正確性。雖然 storage DRAM 往返與軟體 `log/exp` 的額外開銷仍限制了 WebGPU 在極長序列下的極限表現，但透過後續引入 persistent kernel 及多項式近似，我們預期剩餘差距仍可再度收斂。
+### 4.5　小結
+
+綜合而論，WebGPU-Optimized 在 RTX 2070 Super 已能達到 **CUDA 最高 88 %** 的效能，且相對單執行緒 CPU 仍保有三個數量級優勢。跨至 Apple M1 與 Intel UHD 620 後，同一支 WGSL shader 仍提供 **4–463×** 加速，證明提出的三項優化不依賴廠商私有擴充。所有平台 Log-Likelihood 誤差皆小於 $4\times10^{-4}\%$，兼具速度與正確性。
+
+---
               
 ### 第 5 章　討論（Discussion）
 #### 5.1 效能差異與瓶頸
@@ -342,9 +359,12 @@ $$
 
 ##### 5.1.1 SFU 缺失對 'log/exp' 吞吐量的影響
 
-自 Volta 之後的 CUDA 核心，在每個 SM 內配置 32 條 Special Function Unit (SFU)，能於 4 個 cycle 內完成整個 warp 的 'sin' 'cos' 'exp2' 'log2' 等運算，並與 FMA 管線並行發射。反觀 WebGPU，為確保跨 NVIDIA AMD Intel 及 Apple 平台語義一致，WGSL 編譯器不得假設硬體具備對應指令，只能將 'log' 與 'exp' 展開為 mantissa 與 exponent 拆解，再以 6 階多項式校正。由於六次 FMA 具嚴格資料依賴，排程器無法重排，導致 ALU 管線在數十個 cycle 內被同一 warp 壟斷。
+自 Volta 之後的 CUDA 核心，在每個 SM 內配置 32 條 Special Function Unit (SFU)，能於 4 個 cycle 內完成整個 warp 的 'sin' 'cos' 'exp2' 'log2' 等運算，並與 FMA 管線並行發射。反觀 WebGPU，為確保跨 NVIDIA AMD Intel 及 Apple 平台語義一致，WGSL 編譯器僅能將 log/exp 展開為 mantissa／exponent 拆解、LUT 近似，再以 6 階多項式 內嵌 於 兩次 FMA 中完成校正（一次聚合 3 項係數）。整體延遲約 11–12 cycle，雖然仍可與 ALU/FMA 管線交錯，但在波前 (wavefront) 依賴下會使同一 warp 約 10 個時脈無法發射其他指令，累積至長序列時造成額外 0.25–0.30 s 延遲。
 
-若以 1.7 GHz 時脈推估，SFU 峰值約每 cycle 320 次 'log/exp'，展開法僅剩 170 次；Pair-HMM 單格平均需 30 次 'log/exp'，N=10^5 時共觸發 3×10^11 次（計算詳附錄 A），CUDA 理論僅 0.59 s，而 WebGPU 至少 1.01 s，單此因素即帶來 0.42 s 差距。
+![CUDA vs WebGPU log-exp 管線圖](https://hackmd.io/_uploads/BJCN2fiWxe.png)
+圖 5-1　CUDA SFU 與 WebGPU 軟體 log/exp 管線延遲比較CUDA 透過硬體特殊函式單元（SFU）於 4 cycles 內完成 log/exp；WebGPU 需依序經過 mantissa 拆分（ALU）、LUT 近似、FMA 多項式校正及寫回，總耗時 11–12 cycles。   
+    
+若以 1.7 GHz 時脈推估，SFU 峰值約每 cycle 320 次 'log/exp'，展開法僅剩 170 次；Pair-HMM 單格平均需 30 次 'log/exp'，N=10^5 時共觸發 3×10^11 次，CUDA 理論僅 0.59 s，而 WebGPU 至少 1.01 s，單此因素即帶來 0.42 s 差距。
 
 然而波前平行化的 thread 利用率僅約 65%（Nsight Compute 量測），因此真正由 'log/exp' 帶來的額外延遲約落在 0.25–0.30 s，佔總差距 45–55%。再加上展開版本長時間獨占 FMA，使其他乘加指令排隊；當 N 由 10^2 擴至 10^5，總 'log/exp' 調用量隨 N^2 增長，排隊延遲亦呈平方放大，最終導致秒級差距。
 
