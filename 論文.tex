@@ -1,0 +1,656 @@
+\documentclass[12pt]{report}
+\usepackage[utf8]{inputenc}
+\usepackage{xeCJK}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{tabularx}
+\geometry{a4paper, margin=2.5cm}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{2em}
+\begin{document}
+
+\chapter{Abstract}
+As GPU acceleration becomes increasingly prevalent in bioinformatics, conventional CUDA/OpenCL solutions still require driver installation and are locked to specific hardware, hindering online teaching and front-end clinical analysis. Ratified in 2024, \textbf{WebGPU} unifies Vulkan, Direct3D 12, and Metal behind a single JavaScript API and offers three decisive advantages: zero installation, cross-hardware portability, and on-device data residency. Using the compute-intensive \textbf{Pair-Hidden Markov Model Forward (Pair-HMM Forward)} algorithm as a case study, we assess the performance and viability of WebGPU.
+
+Starting from \textbf{Chou, Yu-Chen’s (2024)} open-source C++/CUDA implementation, we first develop a WebGPU Baseline. We then tackle its primary bottlenecks—frequent CPU$\leftrightarrow$GPU round-trips, costly BindGroup reconstruction, and high global-memory latency—by successively introducing (i) single-CommandBuffer batch submission, (ii) Dynamic Uniform Offsets, and (iii) a Workgroup Cache, yielding \textbf{WebGPU-Optimized}. Across an NVIDIA RTX 2070 Super, Apple M1, and Intel UHD 620, and for sequence lengths from $10^2$ to $10^5$, the optimized version delivers \textbf{substantial speed-ups (over 100$\times$ in the best case)} and attains \textbf{more than 80 \% of CUDA’s throughput}. The relative Log-Likelihood error remains below $10^{-5}$ on all devices, and in the absence of an NVIDIA GPU our method still accelerates single-threaded C++ by one to two orders of magnitude.
+
+These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Forward within seconds in a browser. We contribute three browser-specific optimization strategies and detailed cross-hardware measurements, laying the groundwork for Web-native genomic analysis tools and promoting the democratization and real-time execution of bioinformatics workloads.
+
+\chapter{Introduction}
+\section{Background}
+High-throughput sequencing (Next-Generation Sequencing, NGS) has pushed the scale and complexity of genomic data to grow exponentially, creating unprecedented demands on computational performance in bioinformatics. The \textbf{Pair Hidden Markov Model (Pair-HMM) Forward algorithm}, which simultaneously supports sequence alignment, genotype calling, and variant detection, is a core computation in many genomic pipelines.
+
+Current analysis workflows—such as GATK, Samtools, and BWA-MEM2—are mostly written in C++ or Python and gain GPU acceleration through NVIDIA CUDA or OpenCL. Besides installing drivers, SDKs, and dependencies, users are tied to specific GPU architectures. In classrooms or resource-constrained labs, the lack of high-end GPUs or sufficient cloud quotas often forces a CPU fallback, dramatically inflating cost and turnaround time. Cloud services reduce local setup complexity but introduce account management, network latency, and concerns over sensitive-data exposure.
+
+Since WebGPU landed in Chrome’s stable channel in May 2024, Firefox Nightly and Edge Dev have followed with experimental support. By mapping Vulkan, Direct3D 12, and Metal to a single JavaScript API inside the browser sandbox, WebGPU enables real-time parallel computation on NVIDIA, AMD, Intel, and Apple Silicon GPUs \textbf{without driver installation}. It therefore offers a new opportunity to lower the barrier to bioinformatics tools, especially in teaching, clinical front-ends, and low-resource settings.
+
+\section{Motivation and Objectives}
+Although WebGPU promises zero installation, cross-hardware portability, and on-device data residency, it was designed chiefly for graphics and ML inference. A compute-intensive dynamic-programming algorithm such as Pair-HMM Forward encounters several challenges:
+\begin{itemize}
+    \item \textbf{API scheduling overhead} – Wavefronts must be processed sequentially; if each dispatch creates fresh CommandBuffers and BindGroups, CPU$\leftrightarrow$GPU round-trips accumulate rapidly.
+    \item \textbf{Lack of global synchronization} – Every wavefront depends on the previous one; WebGPU exposes only workgroup-level barriers and lacks CUDA-style kernel-return global sync.
+    \item \textbf{No dedicated special-function units (SFUs)} – Pair-HMM issues many \texttt{log}/\texttt{exp} calls. CUDA’s SFUs finish \texttt{log₂} in four cycles, whereas WebGPU must approximate via ALU + LUT + FMA, adding a 2–4$\times$ latency penalty.
+    \item \textbf{High memory-access demand} – The DP matrix resides in a read-write storage buffer; WebGPU’s default path bypasses L1, so frequent global reads and writes incur heavy DRAM traffic.
+\end{itemize}
+These factors magnify WebGPU’s still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: \textbf{Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?}
+
+\section{Methods and Key Results}
+Using \textbf{Chou, Yu-Chen’s (2024)} open-source C++/CUDA program as the reference, we introduce three WebGPU-specific optimizations to address the above bottlenecks:
+\begin{enumerate}
+    \item \textbf{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
+    \item \textbf{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
+    \item \textbf{Workgroup Cache} – Explicitly copy emission and transition constants into \texttt{var<workgroup>} to reduce repeated global-memory reads across wavefronts.
+\end{enumerate}
+On an NVIDIA RTX 2070 Super with sequence lengths 100–100,000, \textbf{WebGPU-Optimized} accelerates the Baseline by 6.8–142$\times$ and reaches 11–84\% of CUDA’s throughput. On Apple M1 and Intel UHD 620, it delivers 4–463$\times$ speed-ups over CPU execution for sequences $\geq 1,000$, while keeping \textbf{Log-Likelihood errors below $10^{-5}$}.
+
+\section{Conclusions and Contributions}
+This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The three complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for \textbf{``open-the-browser-and-compute'' genomic analysis}, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
+
+\chapter{Literature Review}
+\section{High-Performance Computing Requirements in Bioinformatics}
+\subsection{Next-Generation Sequencing and Its Computational Challenges}
+The rapid advance of Next-Generation Sequencing (NGS) has driven the scale and complexity of genomic data to grow exponentially, placing unprecedented demands on computational performance. According to Illumina’s specifications, a NovaSeq X Plus equipped with a 25 B flow cell operating in dual-lane mode can generate roughly \textbf{52 billion ($5.2 \times 10^{10}$) paired-end reads (2 $\times$ 150 bp)} in a single 48-hour run, equivalent to \textbf{$3.25 \times 10^{11}$ bases per hour} (Illumina, 2024). Such data volumes require massive sequence alignment and probabilistic computation well beyond what traditional CPU-only architectures can sustain.
+
+Alignment tools such as \textbf{BWA} (Li \& Durbin, 2010) and \textbf{Bowtie} (Langmead et al., 2009) routinely process millions to billions of short reads. In theory, their worst-case time complexity is \textbf{O(NM)}—with \emph{N} and \emph{M} denoting reference and read lengths—but in practice FM-index–based seeding and extension render the average cost nearly linear \textbf{O(L)} in read length \emph{L}. These challenges have led researchers to adopt \textbf{high-performance computing (HPC)} solutions—especially GPU acceleration—to meet the real-time demands of modern bioinformatics workflows.
+
+\subsection{The Central Role of the Pair-HMM Forward Algorithm}
+The \textbf{Pair-Hidden Markov Model (Pair-HMM) Forward algorithm} is a key component for sequence alignment and genotype inference. Built on hidden Markov models, it uses dynamic programming to compute the alignment probability between two sequences and underpins tools such as \textbf{GATK} (McKenna et al., 2010) and \textbf{Samtools} (Li et al., 2009). As described by Durbin et al. (1998, chap. 4) and Banerjee et al. (2017), the algorithm has a time complexity of \textbf{O(NM)}, with \emph{N} and \emph{M} being the reference and read lengths; memory usage can be reduced to \textbf{O(max\{N, M\})}. For long reads (\emph{N} $\approx 10^4$), Pair-HMM Forward becomes a major computational bottleneck. Recent studies show that GPU parallelisation can dramatically accelerate this step—for example, Schmidt et al. (2024) cut the processing time for \textbf{32 $\times$ 12 kb} fragments on an NVIDIA RTX 4090 from hours to under three minutes. Nevertheless, the algorithm’s sensitivity to memory-access patterns and numerical precision demands hardware-aware optimisation.
+
+\section{Conventional GPU Acceleration Frameworks: CUDA and OpenCL}
+\subsection{CUDA in Bioinformatics}
+As the de-facto standard for GPU computing, \textbf{NVIDIA CUDA} has achieved notable success in bioinformatics. For example, \textbf{Liu et al. (2013)} developed \textbf{CUDASW++ 3.0}, which accelerates the Smith–Waterman algorithm on CUDA GPUs and delivers \textbf{30–90$\times$} speed-ups over single-threaded CPUs. \textbf{Schmidt et al. (2024)} further applied CUDA to the Pair-HMM Forward algorithm, demonstrating high throughput in large-scale genotyping workflows. However, CUDA is tied to NVIDIA-exclusive hardware and requires driver installation plus the CUDA Toolkit, creating a barrier for non-expert users. In addition, CUDA programs must be tuned for specific GPU micro-architectures (e.g., Ampere, Hopper), giving rise to portability challenges across devices.
+
+\subsection{OpenCL’s Cross-Platform Ambition}
+\textbf{OpenCL} was conceived to provide hardware-agnostic GPU acceleration, supporting NVIDIA, AMD, and Intel GPUs alike. \textbf{Stone et al. (2010)} showed its potential in scientific computing, such as accelerating molecular-dynamics simulations. Yet its use in bioinformatics remains limited compared with CUDA, chiefly due to uneven hardware support and a steeper development curve. \textbf{Klöckner et al. (2012)} reported that OpenCL’s memory-management and thread-synchronization behaviour varies markedly across devices, producing inconsistent performance. Moreover, the OpenCL ecosystem is less mature than CUDA’s and lacks a broad library base, further constraining adoption in bioinformatics.
+
+\subsection{Barriers and Limitations of Traditional Frameworks}
+In summary, while CUDA and OpenCL offer high performance, both demand intricate setup steps—driver installation, SDK configuration, and dependency management—that impede deployment in educational settings and clinical front-ends. Cloud-based GPU services (e.g., AWS, Google Cloud) mitigate local setup but introduce data-transfer latency and privacy concerns (Krampis et al., 2012). Furthermore, these solutions are tightly coupled to specific hardware architectures and do not achieve true cross-platform compatibility, limiting their practicality on resource-constrained devices such as laptops and embedded systems.
+
+\section{The Emergence and Technical Characteristics of WebGPU}
+\subsection{Technical Background}
+On 19 December 2024, WebGPU entered the \textbf{W3C Candidate Recommendation Snapshot} stage; it has not yet reached full Recommendation status and therefore still awaits complete implementations and interoperability tests (W3C, 2024). \textbf{Figure 2-1} illustrates WebGPU’s architecture: a single JavaScript / TypeScript API translates application calls to \textbf{Vulkan}, \textbf{Direct3D 12}, or \textbf{Metal} back ends, which are then dispatched to the underlying GPU. This design offers three major advantages—\textbf{driver-free installation, cross-platform compatibility, and browser-sandbox safety}.
+
+WebGPU’s compute pipeline is written in \textbf{WGSL (WebGPU Shading Language)}, which supports high-performance matrix operations and explicit memory control, making it suitable for compute-intensive workloads.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Mapping between the WebGPU API and native back ends}
+    \label{fig:webgpu_stack}
+\end{figure}
+
+JavaScript/TypeScript invokes WebGPU through a unified interface. The browser selects Vulkan (Linux), Direct3D 12 (Windows), or Metal (macOS/iOS) as the actual back end and submits commands to the GPU.
+
+\subsection{High-Performance Computing Potential of WebGPU}
+WebGPU has already shown promise in graphics and machine-learning domains. \textbf{MDN Web Docs} (2025) reports game-rendering performance on WebGPU that rivals native Vulkan, while \textbf{TensorFlow.js} accelerates in-browser neural-network training via its WebGPU back end (TensorFlow.js Team, 2024). According to the \textbf{Google Chrome Team} (2024), \textbf{Transformers.js} running BERT-base on an NVIDIA RTX 4060 Laptop is \textbf{32.51$\times$ faster} in WebGPU mode than in WebAssembly, underscoring WebGPU’s performance potential.
+
+These cases demonstrate that WebGPU’s execution model can exploit GPU parallelism effectively. However, its adoption in bioinformatics remains nascent because the field demands stricter numerical precision and memory-access efficiency. WebGPU trades some low-level control for broad hardware portability, which distinguishes its compute shaders from those of traditional GPU frameworks.
+
+\subsection{Challenges and Limitations of WebGPU}
+Despite its cross-platform appeal, WebGPU still faces hurdles in high-intensity computing. First, browser-side API scheduling overhead is relatively high, particularly during frequent CPU–GPU data exchanges (Google Chrome Team, 2024). Second, WebGPU exposes only \texttt{workgroupBarrier} and lacks any cross-workgroup global-synchronisation primitive, hampering algorithms that require complex thread coordination.
+
+Moreover, the browser sandbox constrains memory allocation and special-function-unit (SFU) usage. WGSL lacks built-in transcendental functions (e.g., \texttt{log}, \texttt{exp}) and must rely on software emulation; although the GPU may execute these via SFUs, additional overhead remains. Double-precision (f64) support is also less mature than in CUDA (Jones, 2023). The wavefront dependencies of Pair-HMM Forward demand frequent memory access and thread synchronisation, making high-performance parallelisation challenging under WebGPU’s current limitations.
+
+\section{Initial Explorations of WebGPU in Bioinformatics}
+Direct WebGPU applications in bioinformatics are still scarce, but related technologies such as WebGL and WebAssembly (WASM) provide useful precedents. \textbf{Ghosh et al. (2018)} used WebGL to build \textbf{Web3DMol}, showing that in-browser molecular visualisation is feasible and that JavaScript can serve bioinformatics needs. \textbf{WASM-SIMD} further boosts browser-side performance; \textbf{Jones (2023)} argues that combining WASM-SIMD with WebGPU could accelerate sequence processing.
+
+Other compute-intensive domains also offer insights. For instance, the WebGPU back end of \textbf{TensorFlow.js} speeds up browser-based neural-network training through efficient matrix operations (TensorFlow.js Team, 2024); its memory-management and parallelisation strategies inspire our port of Pair-HMM Forward, particularly for handling frequent memory access and compute-heavy kernels. Nonetheless, existing studies focus mostly on visualisation or lightweight workloads; implementations of high-intensity algorithms such as Pair-HMM Forward remain unexplored. While \textbf{Schmidt et al. (2024)} provide a CUDA baseline, they do not investigate browser-specific optimisations.
+
+\section{Research Gap and Positioning of This Work}
+The literature reveals three key shortcomings:
+\begin{enumerate}
+    \item \textbf{Lack of systematic verification} of WebGPU’s performance and feasibility for compute-heavy bioinformatics tasks such as Pair-HMM Forward.
+    \item \textbf{Absence of browser-specific optimisation strategies} addressing GPU-compute bottlenecks—CPU–GPU round-trips, BindGroup reconstruction, and global-memory latency. For example, each \texttt{setBindGroup()} call traverses multiple layers (V8 $\rightarrow$ Blink $\rightarrow$ Dawn $\rightarrow$ Driver), incurring $\sim$5–15 $\mu$s of latency, which is significant for wavefront algorithms.
+    \item \textbf{Insufficient cross-hardware evaluations} (NVIDIA, Apple, Intel) to gauge WebGPU’s generality. Mainstream tools like GATK HaplotypeCaller require CUDA and thus NVIDIA drivers, limiting deployment in classrooms or resource-constrained environments; cloud solutions raise latency and privacy concerns.
+\end{enumerate}
+By porting \textbf{Chou, Yu-Chen’s (2024)} CUDA implementation to WebGPU, this study proposes three browser-side optimisations—\textbf{single-CommandBuffer batch submission, Dynamic Uniform Offsets, and a Workgroup Cache}—and validates their performance and accuracy across multiple hardware platforms. The results close the research gap in WebGPU bioinformatics applications and lay the foundation for \textbf{driver-free, cross-hardware, on-device genomic analysis tools}.
+
+\chapter{Methods}
+\section{Mathematical Model}
+This study adopts a \textbf{Pair-HMM combined with a sequence profile}.
+
+The hidden states are Match (M), Insert (I), and Delete (D), over the alphabet $\{A,C,G,T,-\}$.
+
+The read sequence is represented by a probability matrix
+\[
+P = [p_{i,a}], \quad 1 \leq i \leq m, \quad a \in \{A,C,G,T\}, \quad \sum_a p_{i,a} = 1,
+\]
+which gives the probability that position $i$ of the read is character $a$.
+
+The haplotype sequence is a fixed string $h_1, \dots, h_n$.
+
+The transition probabilities
+\[
+t_{XY}, \quad X,Y \in \{M,I,D\},
+\]
+and the base-emission matrix $\varepsilon_X(x,y)$ follow the configuration used in the C++/CUDA implementation published by \textbf{Chou, Yu-Chen (2024)}.
+
+\subsection{Profile emission probabilities}
+\[
+e_{i,j}^M = \sum_a p_{i,a} \varepsilon_M(a, h_j), \quad e_{i,j}^I = \sum_a p_{i,a} \varepsilon_I(a, -),
+\]
+while the Delete state always emits a gap, so its emission probability is fixed at 1.
+
+\section{Pair-HMM Forward Algorithm}
+The Pair-HMM Forward recursion must advance along the anti-diagonals (wavefronts) of the dynamic-programming (DP) matrix—as illustrated in \textbf{Figure 3-1}. Each wavefront can proceed only after the previous one has completed; without device-side global synchronisation, this dependency becomes a performance bottleneck on the GPU.
+
+\begin{enumerate}
+    \item \textbf{Initialisation}
+    \[
+    M_{0,0} = 1, \quad I_{0,0} = D_{0,0} = 0, \quad M_{0,j} = I_{0,j} = 0, \quad D_{0,j} = \frac{1}{n} \quad (j > 0).
+    \]
+    \item \textbf{Recursion}
+    \[
+    M_{i,j} = e_{i,j}^M (t_{MM} M_{i-1,j-1} + t_{IM} I_{i-1,j-1} + t_{DM} D_{i-1,j-1}),
+    \]
+    \[
+    I_{i,j} = e_{i,j}^I (t_{MI} M_{i-1,j} + t_{II} I_{i-1,j}),
+    \]
+    \[
+    D_{i,j} = t_{MD} M_{i,j-1} + t_{DD} D_{i,j-1}.
+    \]
+    \item \textbf{Termination}
+    \[
+    P = \sum_{j=1}^n (M_{m,j} + I_{m,j}).
+    \]
+    \item \textbf{Time complexity} is $\mathcal{O}(mn)$.
+\end{enumerate}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Illustration of wavefront computation in the Pair-HMM Forward algorithm}
+    \label{fig:wavefront}
+\end{figure}
+
+Left: recursion dependencies of the three hidden states M/I/D. Right: yellow arrows indicate batched progression along anti-diagonals; red, green, and blue squares represent the current wavefront’s M, I, and D states, respectively.
+
+\section{System Design and Implementation}
+\subsection{C++/CUDA Version}
+Building on prior work that showed CUDA can efficiently implement Pair-HMM via anti-diagonal parallelisation, we \textbf{adopted and refactored the open-source C++/CUDA code by Chou, Yu-Chen (2024)}. All double-precision (\texttt{double}) variables were converted to single precision (\texttt{float}) so that the CUDA results represent an upper-bound ``performance ceiling'' directly comparable with our WebGPU implementation. Because WebGPU currently guarantees only \texttt{f32} arithmetic, retaining \texttt{f64} on CUDA would have obscured cross-platform comparisons with precision differences. After conversion, the maximum relative error at sequence length $N = 10^5$ was merely $2.18 \times 10^{-1}\%$, satisfying the accuracy threshold required for subsequent WebGPU validation.
+
+We preserve the \textbf{``one kernel per anti-diagonal''} structure: each of the $2N$ wavefronts launches a kernel, and a \texttt{cudaDeviceSynchronize()} between adjacent wavefronts acts as a GPU-wide barrier to ensure all thread-block dependencies are fully resolved. This maps the DP-recurrence dependencies on the left, above, and upper-left cells to device execution in the most straightforward manner.
+
+Global synchronisation alone, however, cannot hide memory latency. Inside each block we therefore keep a fine-grained \texttt{\_\_syncthreads()} barrier so that every 32 threads share cached values from the previous row before advancing. For the three DP arrays $M$, $I$, and $D$, we employ a \textbf{host-side ``four-row pointer rotation''}: four $(n+1)$-length buffers are allocated once, and the host loop rotates pointers to realise the \texttt{prev $\rightarrow$ curr $\rightarrow$ new} shift. Because CUDA pointers can be treated as ordinary C pointers, this scheme avoids reallocations and \texttt{memcpy} overhead, maximising effective PCIe/NVLink bandwidth.
+
+This structure also paves the way for the WebGPU port: once inside the browser we lose mutable pointers and must replace them with either BindGroup reconstruction or Dynamic Uniform Offsets.
+
+\subsection{WebGPU Baseline}
+\subsubsection{From CUDA ``multiple kernels'' to WebGPU ``multiple dispatches''}
+Pair-HMM Forward advances along anti-diagonals (wavefronts); each wavefront must finish before the next can begin.
+
+The most straightforward CUDA strategy is a host-side \texttt{for} loop that launches successive kernels and inserts a \texttt{cudaDeviceSynchronize()} between them—\textbf{Figure 3-2} shows that the synchronisation point remains \textbf{inside the GPU}.
+
+In contrast, WebGPU lacks a device-side global barrier; synchronisation must return to JavaScript and invoke a new \texttt{dispatch}.
+
+For a read length of $N$, this inevitably triggers \textbf{2$N$ CPU$\leftrightarrow$GPU round-trips}, which becomes the first bottleneck of the Baseline implementation.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Comparison of global synchronisation in CUDA and WebGPU}
+    \label{fig:global_sync}
+\end{figure}
+
+CUDA can insert a \emph{global} barrier entirely on the GPU; WebGPU must return to the host and issue a new \texttt{dispatch} to achieve global synchronisation.
+
+After the host calls \texttt{queue.submit()} for the current wavefront, it must await \texttt{device.queue.onSubmittedWorkDone()} before updating uniforms and submitting the next dispatch.
+
+For $N=10^5$, this means \textbf{200,000 \texttt{submit $\rightarrow$ await} cycles}, and the synchronisation latency is fully exposed on the JavaScript thread, severely limiting performance.
+
+\subsubsection{Pointer rotation versus the immutability of BindGroups}
+CUDA needs only to swap three \texttt{float*} pointers between two wavefronts to rotate the roles \texttt{prev $\rightarrow$ curr $\rightarrow$ new}; the driver does not reallocate resources.
+
+By contrast, in WebGPU each binding slot is \textbf{frozen when the BindGroup is created}.
+
+To let the next wavefront read a different DP buffer, the host must call \texttt{device.createBindGroup()} again to point the same binding slot to a new \texttt{GPUBuffer}.
+
+This call traverses \textbf{V8 $\rightarrow$ Blink $\rightarrow$ Dawn $\rightarrow$ Driver}, taking about 5–15 $\mu$s each time.
+
+\textbf{Figure 3-3} illustrates that a single \texttt{createBindGroup()} passes through multiple IPC and validation layers, so for $N=10^5$ the accumulated delay can reach tens of seconds—Baseline bottleneck \#2.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Multi-layer IPC/validation path for binding a WebGPU storage buffer}
+    \label{fig:ipc_path}
+\end{figure}
+
+Compared with CUDA’s direct ``Host $\rightarrow$ VRAM'' path, WebGPU must cross three extra bridges, raising the delay of each \texttt{createBindGroup()} to 5–15 $\mu$s.
+
+\subsubsection{The absence of shared memory and high-latency storage-buffer access}
+In CUDA, the nine transition coefficients and 75 emission coefficients are preloaded into 48 KB of shared memory and reused by all threads at $\approx$80 ns latency.
+
+Although WGSL supports \texttt{var<workgroup>}, its capacity is limited and manual copying is required.
+
+For correctness, the Baseline keeps these small matrices in a storage buffer.
+
+Consequently, each cell computation issues 6–9 global reads, each at $\approx$300 ns—far slower than shared memory—and this forms bottleneck \#3.
+
+\subsubsection{Interim trade-offs in the Baseline}
+Given the above constraints, the Baseline adopts three compromises.
+\begin{itemize}
+    \item \textbf{One compute pass per wavefront}: natural GPU-side serialisation replaces \texttt{cudaDeviceSynchronize()}, guaranteeing execution order.
+    \item \textbf{Per-wavefront BindGroup recreation}: explicitly switches the roles of the three DP buffers, incurring API overhead but ensuring correct read/write directions.
+    \item \textbf{Single ComputePipeline reuse}: the pipeline is created once during initialisation and reused thereafter; however, WebGPU still requires a new Compute Pass for every wavefront, so the cost of building a \texttt{CommandEncoder} / \texttt{ComputePassEncoder} cannot be fully avoided.
+\end{itemize}
+
+\subsubsection{Performance profile of the Baseline}
+On an NVIDIA RTX 2070 Super, the Baseline takes \textbf{466 s} for $N=100,000$, roughly two orders of magnitude slower than the CUDA version on the same card.
+
+Detailed profiling attributes the delay to \textbf{2$N$ IPC synchronisations}, \textbf{2$N$ BindGroup creations}, and \textbf{frequent storage-buffer reads}.
+
+These results highlight three architectural bottlenecks unique to WebGPU and motivate the optimisation strategies in the next section: \textbf{reducing host$\leftrightarrow$GPU round-trips, minimising BindGroup churn, and caching hot data in \texttt{var<workgroup>}}.
+
+\subsection{WebGPU Optimized Version (This Work)}
+To eliminate the Baseline’s three major bottlenecks—
+\begin{enumerate}
+    \item frequent host synchronizations,
+    \item repeated BindGroup construction, and
+    \item high-latency storage-buffer traffic—
+\end{enumerate}
+we introduce three browser-side optimizations: \textbf{single-CommandBuffer batch submission}, \textbf{Dynamic Uniform Offsets}, and a \textbf{Workgroup Cache}.
+
+Below we first recap WebGPU’s command-recording pipeline, then explain each optimization’s rationale, implementation, and impact.
+
+\subsubsection{Single-CommandBuffer Batch Submission — Reducing CPU–GPU Round-Trips}
+As \textbf{Figure 3-4} shows, the original 2$N$ \texttt{dispatchWorkgroups} calls are first recorded into the \textbf{same} \texttt{CommandBuffer}; the host finally issues a single \texttt{queue.submit()}, eliminating more than 99.99\% of IPC latency.
+
+\textbf{CommandEncoder and the command stream.}
+
+A WebGPU \texttt{CommandEncoder} records \texttt{beginComputePass}, \texttt{dispatchWorkgroups}, \texttt{copyBufferToBuffer}, \texttt{end}, and related commands.
+
+Calling \texttt{encoder.finish()} produces a \texttt{GPUCommandBuffer}, which \texttt{device.queue.submit([commandBuffer])} sends to the GPU; the GPU then executes the entire stream without further CPU intervention.
+
+\textbf{Pain points of many small submissions.}
+
+The Baseline maintains wavefront dependencies with a host-side \texttt{for} loop that rebuilds an encoder, \texttt{submit}s, \texttt{await}s, and then constructs the next encoder.
+
+For a sequence of length \emph{N} this repeats 2\emph{N} times.
+
+Each wait triggers CPU–GPU IPC plus browser scheduling overhead and forces the JavaScript thread to oscillate between idle and active states—an expensive pattern.
+
+\textbf{Advantages of a single, monolithic stream.}
+
+We preserve the per-wavefront logic but perform multiple \texttt{beginComputePass} calls \textbf{during recording only}, issuing \textbf{one} final \texttt{submit}.
+
+The GPU can then execute from start to finish without CPU stalls; driver validation and scheduling costs plunge, and consecutive \texttt{dispatch}/\texttt{copy} commands smooth DRAM traffic.
+
+Compressing 2\emph{N} IPC events into 1 shortens total runtime markedly, proving the value of batch submission.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Single-CommandBuffer batch-submission workflow}
+    \label{fig:cmd_buffer}
+\end{figure}
+
+Multiple wavefront \texttt{dispatchWorkgroups} calls are first recorded into one \texttt{CommandBuffer}; the host sends the buffer to the GPU with a single \texttt{queue.submit()}, removing 2\emph{N} rounds of IPC and scheduling overhead.
+
+\subsubsection{Dynamic Uniform Offset — Cutting Constant-Update Overhead}
+As \textbf{Figure 3-5} illustrates, per-wavefront constants \texttt{(len, diag, numGroups)} are stored consecutively in \textbf{one} uniform buffer, aligned to \textbf{256 B} blocks.
+
+At \texttt{dispatch} time a \textbf{dynamic offset} selects the required block.
+
+This optimization affects \textbf{only constant updates}: we no longer allocate a tiny UBO for every \texttt{diag}, nor change the BindGroup layout.
+
+We still rebuild a BindGroup for each \texttt{diag} to rotate the three DP buffers \texttt{dpPrev / dpCurr / dpNew}, so \textbf{BindGroup reconstructions remain 2$N$}.
+
+\textbf{(1) Baseline: many buffers \& frequent rebuilds}
+
+The Baseline calls \texttt{device.createBindGroup()} for every wavefront.
+
+Each call travels V8 $\rightarrow$ Blink $\rightarrow$ Dawn layers, costing 5–15 $\mu$s; for $N = 10^5$ the accumulated delay runs into seconds.
+
+\textbf{(2) One UBO + dynamic offsets}
+
+WebGPU allows a 256-byte–aligned dynamic offset in \texttt{setBindGroup()}.
+
+All constants reside in a single UBO, and
+\[
+\texttt{offset(diag) = (diag - 1) \times 256 B}
+\]
+selects the slice.
+
+This removes buffer churn and keeps every \texttt{writeBuffer()} targeting the same object.
+
+Although \texttt{createBindGroup()} is still invoked, each validation now checks fewer entries, reducing per-call time by roughly 20–30\%.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Data layout for Dynamic Uniform Offsets}
+    \label{fig:dyn_offset}
+\end{figure}
+
+Each wavefront’s constants \texttt{(len, diag, numGroups)} occupy a 256-byte slot in a shared UBO.
+
+Switching wavefronts merely adjusts the dynamic offset; no extra UBOs are allocated.
+
+\subsubsection{Workgroup Cache — Moving Hot Constants out of DRAM}
+\textbf{Baseline latency.}
+
+In the Baseline, WGSL accesses to \texttt{var<storage>} bypass L1 and incur $\approx$150 ns latency.
+
+Each cell reads seven transition and eight emission values, saturating DRAM.
+
+\textbf{Co-operative loading and local reuse.}
+
+In the optimized shader, each workgroup co-loads the nine transition coefficients and 75 emission coefficients into \texttt{var<workgroup>} at start-up.
+
+With 256 threads per workgroup, every thread performs only one global read, and the data are reused locally throughout the wavefront.
+
+\textbf{Performance and portability.}
+
+The Workgroup Cache smooths DRAM bandwidth spikes.
+
+Because \texttt{var<workgroup>} is standard WGSL, the technique ports cleanly to NVIDIA, Intel, and Apple GPUs.
+
+\subsubsection{Summary}
+Enabling \textbf{all three browser-side optimizations} simultaneously yields the performance shown in \textbf{Table 3-1}.
+
+On an RTX 2070 Super the runtime drops from 466 s to \textbf{74 s}, an 84\% reduction.
+
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|X|X|X|X|}
+        \hline
+        Metric & Baseline & Optimized & Reduction \\
+        \hline
+        CPU$\leftrightarrow$GPU round-trips & $2N$ & 1 & $-99.999\%$ \\
+        BindGroup entries & $2N \times \geq 10$ & $2N \times 7$ & $-30\%$ \\
+        Storage-buffer reads / cell & 6–9 & 1 & $-83\%$ \\
+        Execution time ($N = 100,000$) & 466 s & 74 s & $-84\%$ \\
+        \hline
+    \end{tabularx}
+    \caption{Overview of performance gains from the three browser-side optimizations}
+    \label{tab:opt_performance}
+\end{table}
+
+On the RTX 2070 Super, the WebGPU-Optimized version lags CUDA by only 19\% for a 100,000-base sequence yet remains nearly three orders of magnitude faster than single-threaded CPU execution—demonstrating that near-native GPU performance is achievable inside the browser sandbox.
+
+\chapter{Results}
+\section{Experimental Environment}
+To ensure the reproducibility of our performance data, all WebGPU tests were run in \textbf{Chrome 135.0.7049.114}.
+
+For comparability, the Apple M1 and Intel UHD 620 platforms were upgraded to the same browser version, and the relevant OS versions are listed alongside.
+
+\textbf{Table 4-1} summarises the three hardware setups and software stacks that serve as our baseline for later experiments.
+
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|X|X|X|X|}
+        \hline
+        Category & Parameter & RTX 2070 Super & Apple M1 GPU & Intel UHD 620 \\
+        \hline
+        CPU & Model & Ryzen 7 3700X & Apple M1 (4P + 4E) & Core i5-8265U \\
+        GPU & SM / FP32 Peak & 40 SM – 9.1 TFLOPS & 8 Cores – 2.6 TFLOPS & 24 EU – 0.35 TFLOPS \\
+        OS & Version & Ubuntu 24.04.2 LTS & macOS 14.4 & Windows 11 22H2 \\
+        Browser & Version & Chrome 135.0.7049.114 & same as left & same as left \\
+        CUDA drv & Version & CUDA Toolkit 12.0 / Driver 550.54 & — & — \\
+        \hline
+    \end{tabularx}
+    \caption{Experimental environment}
+    \label{tab:exp_env}
+\end{table}
+
+\section{Performance Data}
+\subsection{RTX 2070 Super: Runtime and Speed-ups of Four Versions}
+Wall-clock time $T(N)$ is defined as ``the elapsed time from the host call to the algorithm until the device returns the result,'' including GPU memory allocation and \texttt{queue.submit()}.
+
+Under this definition, \textbf{Table 4-2} lists the measured runtimes of C++, CUDA, WebGPU-Baseline (Init), and \textbf{WebGPU-Optimized (Opt.)} for four sequence lengths, together with their relative speed-ups
+\[
+S_{X \leftarrow Y}(N) = \frac{T_Y(N)}{T_X(N)}
+\]
+
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|c|X|X|X|X|X|X|}
+        \hline
+        $N$ & CPU T (s) & CUDA T (s) & WGPU-Init (s) & \textbf{WGPU-Opt. (s)} & Opt./CPU & Opt./CUDA \\
+        \hline
+        $10^2$ & 0.00330 & 0.00229 & 0.135 & \textbf{0.020} & 165$\times$ & 0.11$\times$ \\
+        $10^3$ & 0.327 & 0.0208 & 0.602 & \textbf{0.043} & 7.6$\times$ & 0.49$\times$ \\
+        $10^4$ & 32.80 & 0.1908 & 21.83 & \textbf{0.346} & 94.8$\times$ & 0.55$\times$ \\
+        $10^5$ & 3275.6 & 2.7696 & 466.8 & \textbf{3.299} & 993$\times$ & 0.84$\times$ \\
+        \hline
+    \end{tabularx}
+    \caption{Runtime and speed-ups of four versions on the RTX 2070 Super}
+    \label{tab:rtx_performance}
+\end{table}
+
+\textbf{Key finding:} WebGPU-Optimized sustains \textbf{0.49–0.84$\times$ CUDA performance} while delivering up to \textbf{993$\times$} acceleration over single-threaded CPU.
+
+At $N=10^2$, WebGPU-Opt spends time waiting for V8 start-up and IPC, reaching only 11\% of CUDA.
+
+As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Workgroup Cache hides constant-access latency, so by $N=10^5$ WebGPU-Opt attains \textbf{84\% of CUDA} with only a 0.53-s gap.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Speed-up of WebGPU-Baseline over CPU on the RTX 2070 Super}
+    \label{fig:2070s-1}
+\end{figure}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Speed-up comparison of CUDA and WebGPU-Baseline (CPU = 1.0) on the RTX 2070 Super}
+    \label{fig:2070s-3}
+\end{figure}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Speed-up of WebGPU-Optimized versus Baseline on the RTX 2070 Super}
+    \label{fig:2070s-2}
+\end{figure}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Overall speed-up of the four versions (CPU / CUDA / Baseline / Optimized) on the RTX 2070 Super}
+    \label{fig:2070s-4}
+\end{figure}
+
+\subsection{Apple M1 and Intel UHD 620: Cross-Platform Performance}
+Because these iGPUs cannot run CUDA, we measure WebGPU-Opt’s pure acceleration over single-threaded CPU by
+\[
+S_{\text{Opt} \leftarrow \text{CPU}}(N) = \frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)}
+\]
+
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|c|X|X|X|X|X|X|}
+        \hline
+        $N$ & M1 CPU (s) & \textbf{M1 Opt. (s)} & Opt./CPU & UHD CPU (s) & \textbf{UHD Opt. (s)} & Opt./CPU \\
+        \hline
+        $10^2$ & 0.00391 & 0.045 & 0.09$\times$ & 0.0101 & 0.136 & 0.07$\times$ \\
+        $10^3$ & 0.308 & \textbf{0.034} & 9.1$\times$ & 0.936 & \textbf{0.234} & 4.0$\times$ \\
+        $10^4$ & 31.38 & \textbf{0.272} & 115$\times$ & 95.51 & \textbf{1.524} & 62.7$\times$ \\
+        $10^5$ & 3347.6 & \textbf{7.245} & 463$\times$ & 10851 & \textbf{48.79} & 222$\times$ \\
+        \hline
+    \end{tabularx}
+    \caption{Acceleration of WebGPU-Optimized over CPU on Apple M1 and Intel UHD 620}
+    \label{tab:cross_platform}
+\end{table}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{WebGPU-Optimized speed-up over CPU on Intel UHD 620}
+    \label{fig:uhd620}
+\end{figure}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{WebGPU-Optimized speed-up over CPU on Apple M1}
+    \label{fig:m1}
+\end{figure}
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Comparison of WebGPU-Optimized speed-ups (CPU = 1.0) across three GPUs at $N=10^5$}
+    \label{fig:cross-hw}
+\end{figure}
+
+\section{Correctness Verification—Relative Log-Likelihood Error}
+Using CUDA on the RTX 2070 S as the golden standard, we compute the relative error
+\[
+\varepsilon(N) = \frac{|LL_{\text{platform}}(N) - LL_{\text{CUDA}}(N)|}{|LL_{\text{CUDA}}(N)|} \times 100\%
+\]
+
+\begin{table}[h]
+    \centering
+    \begin{tabularx}{\textwidth}{|X|c|c|c|c|X|}
+        \hline
+        Platform / $N$ & $10^2$ & $10^3$ & $10^4$ & $10^5$ & Max. error \\
+        \hline
+        WGPU-Opt - 2070 S & $2.5 \times 10^{-4}\%$ & $1.3 \times 10^{-5}\%$ & $2.2 \times 10^{-4}\%$ & $3.8 \times 10^{-4}\%$ & \textbf{$3.8 \times 10^{-4}\%$} \\
+        WGPU-Opt - M1 & $2.8 \times 10^{-4}\%$ & $1.5 \times 10^{-5}\%$ & $2.2 \times 10^{-4}\%$ & $3.8 \times 10^{-4}\%$ & $3.8 \times 10^{-4}\%$ \\
+        WGPU-Opt - UHD 620 & $2.5 \times 10^{-4}\%$ & $1.3 \times 10^{-5}\%$ & $2.2 \times 10^{-4}\%$ & $3.8 \times 10^{-4}\%$ & $3.8 \times 10^{-4}\%$ \\
+        \hline
+    \end{tabularx}
+    \caption{Relative Log-Likelihood error (vs. CUDA-2070 S) on each platform}
+    \label{tab:likelihood_error}
+\end{table}
+
+\section{Summary}
+Overall, WebGPU-Optimized reaches \textbf{up to 88\% of CUDA performance} on the RTX 2070 Super while retaining a three-order-of-magnitude advantage over single-threaded CPU.
+
+On Apple M1 and Intel UHD 620, the same WGSL shader still delivers \textbf{4–463$\times$} acceleration, demonstrating that our three optimizations do not rely on vendor-specific extensions.
+
+Across all platforms, Log-Likelihood errors are below $4 \times 10^{-4}$, ensuring both speed and numerical correctness.
+
+\chapter{Discussion}
+\section{Performance Differences and Bottlenecks}
+The experiments reveal that—even on the RTX 2070 Super—our WebGPU-Optimized version still lags CUDA by 12\%–88\%.
+
+On the Apple M1 and Intel UHD 620 the optimized shader achieves dozens- to hundreds-fold speed-ups over single-threaded CPU code, yet its absolute runtime remains higher than CUDA’s.
+
+Hence the bottlenecks lie not in the algorithmic flow but in the interaction between micro-architecture and API design.
+
+We therefore analyse three root causes: the absence of special-function units (SFUs), differences in cache paths, and resource-binding overhead.
+
+\subsection{Impact of Missing SFUs on \texttt{log/exp} Throughput}
+As \textbf{Figure 5-1} illustrates, every streaming multiprocessor (SM) in post-Volta CUDA GPUs contains 32 \textbf{special-function units (SFUs)} that complete an entire warp’s \texttt{log/exp} in four cycles.
+
+To guarantee identical semantics across NVIDIA, AMD, Intel, and Apple devices, WebGPU must decompose \texttt{log/exp} into mantissa/exponent extraction, LUT approximation, and two fused-multiply-add (FMA) steps for a sixth-order polynomial correction, taking 11–12 cycles in total.
+
+\begin{figure}[h]
+    % Placeholder: Image not included as per template guidelines
+    \caption{Latency comparison between CUDA SFU and WebGPU software \texttt{log/exp} pipeline}
+    \label{fig:log_exp_pipeline}
+\end{figure}
+
+CUDA finishes in four cycles via hardware SFUs; WebGPU needs mantissa split (ALU, 1 cycle) $\rightarrow$ LUT interpolation (4 cycles) $\rightarrow$ FMA polynomial correction (4 cycles) $\rightarrow$ \texttt{ln $\times$ LN2} and write-back (2–3 cycles), for a total of 11–12 cycles.
+
+Assuming a 1.7 GHz clock, the SFU peak is roughly \textbf{320 ops/cycle}, whereas the decomposed path yields \textbf{170 ops/cycle}.
+
+Each DP cell in Pair-HMM requires about 30 \texttt{log/exp} calls; at $N=10^5$ the total reaches $3 \times 10^{11}$ calls: the theoretical CUDA time is 0.59 s, while WebGPU needs at least 1.01 s—already a $\approx$0.42 s gap.
+
+Measured under wavefront dependencies and 65\% thread utilisation, the extra latency is 0.25–0.30 s (45–55\% of the total gap); because workload grows with $N^2$, this factor alone leads to second-scale differences.
+
+\subsection{Cache-Policy Gap: 32 KB L1 Hits vs. Storage-Path Bypass}
+CUDA can issue \texttt{ld.global.ca/cg} to cache read-only data in the 32 KB L1 or 64 KB sector cache; on TU104 a single access costs $\approx$20 ns.
+
+The three DP rows in Pair-HMM are contiguous (one written, two read) and therefore L1-friendly.
+
+By contrast, Dawn maps WGSL \texttt{var<storage>} to \texttt{ld.global.cg} / \texttt{st.global.cg} and bypasses L1 to guarantee cross-workgroup coherence.
+
+Even after moving the 336 B transition and emission tables into \texttt{var<workgroup>}, DP rows still travel to DRAM.
+
+The same 15 global reads thus take 0.30 $\mu$s on CUDA but 1.2–1.5 $\mu$s on WebGPU—another tier of latency.
+
+\subsection{API Overhead: Pointer Rotation vs. BindGroup Reconstruction}
+On CUDA the host rotates three pointers to swap \texttt{prev}, \texttt{curr}, and \texttt{new} at negligible cost.
+
+WebGPU, however, uses immutable descriptors: any buffer change forces a new call to \texttt{device.createBindGroup}.
+
+That call crosses V8 $\rightarrow$ Blink $\rightarrow$ Dawn $\rightarrow$ Driver, costing 5–15 $\mu$s.
+
+For $N=10^5$ the 2$N$ anti-diagonals trigger 200,000 reconstructions—seconds of accumulated delay.
+
+Our Dynamic Offset merges constants and removes repeated uniform bindings, but the three writable DP buffers still require 2$N$ reconstructions, leaving a significant bottleneck.
+
+\subsection{Quadratic Amplification and Energy Implications}
+Because Pair-HMM’s workload grows with $N^2$, minor latencies are quadratically amplified.
+
+At $N=100$ the SFU deficit is masked by cache hits; at $N=100,000$ it alone imposes a $\approx$1 s floor.
+
+Adding L2 trips and BindGroup rebuilds, WebGPU-Optimized still needs 3.3 s versus CUDA’s 2.77 s.
+
+Thus unequal hardware features and divergent API models remain the core reasons WebGPU cannot yet fully match CUDA.
+
+\section{Cross-Hardware Performance}
+\subsection{Apple M1: Pros and Cons of a Unified-Memory Architecture (UMA)}
+On the Apple M1’s UMA design, CPU and GPU share 8 GB of LPDDR4X, eliminating discrete-VRAM transfers.
+
+For moderate $N$, \texttt{copyBufferToBuffer()} reduces to pointer offsets rather than DMA, and WebGPU’s start-up latency is lower than on discrete GPUs.
+
+At very large $N$, however, CPU-GPU bandwidth contention limits performance, leaving the M1 still 2.2$\times$ slower than the RTX 2070 S.
+
+Nevertheless, WebGPU-Optimized attains a \textbf{463$\times$} speed-up over single-threaded CPU, confirming that Dynamic Uniform Offsets and the Workgroup Cache effectively hide memory latency even under UMA.
+
+\subsection{Intel UHD 620: Driver Maturity and Scheduling Strategy}
+The UHD 620 lacks hardware SFUs and has only 24 EUs, making heavy \texttt{log/exp} traffic more costly.
+
+Chrome $\rightarrow$ Dawn $\rightarrow$ DX12 still serialises commands via submit-fence, leaving visible CPU idle periods at small $N$.
+
+Its 768 KB L3 cache easily thrashes when multiple storage buffers interleave, causing L2 misses and longer waits.
+
+Even so, dynamic offsets cut BindGroup churn and the Workgroup Cache stores high-reuse constants, yielding a \textbf{222$\times$} speed-up at $N = 100,000$.
+
+This demonstrates that our optimisations are vendor-agnostic and can deliver tangible gains on low-end iGPUs, underscoring WebGPU’s software-level potential.
+
+\chapter{Future Work}
+This study demonstrates that the three WebGPU-oriented optimizations—\textbf{single-CommandBuffer batch submission}, \textbf{Dynamic Uniform Offsets}, and a \textbf{Workgroup Cache}—can reduce the browser-side runtime of Pair-HMM Forward to within a constant factor of native CUDA. While this level of performance already supports online demonstrations and interactive teaching, further improvements remain desirable for large-scale clinical pipelines and cloud back-ends. Accordingly, we outline three promising directions—at the API, algorithm, and ecosystem levels—and explain why each is a logical next step.
+
+\section{Closing the Double-Precision Gap}
+In GPU-accelerated scientific computing, \textbf{FP64} is often the last line of defence for numerical robustness. WebGPU currently guarantees only \textbf{FP32}; even on hardware with native FP64 (e.g., RTX 40-series, Apple M2 Max), WGSL still lacks an official \texttt{f64} type. For Pair-HMM Forward, 32-bit precision usually keeps the relative error below $10^{-5}$, yet \emph{ultra-long reads} or products of extremely small probabilities can still suffer underflow and cumulative error. Future work could (i) extend the specification with an \texttt{f64} type or (ii) apply \textbf{mixed-precision} techniques to selectively elevate precision inside the shader. Either approach would widen WebGPU’s applicability to high-sensitivity sequence analyses.
+
+\section{Hybrid Acceleration with WASM + SIMD and WebGPU}
+Although WebGPU delivers high throughput for large batches, its fixed API and driver overheads are a bottleneck for short reads or highly fragmented workloads. A practical remedy is to introduce \textbf{WebAssembly (WASM) with 128-bit SIMD} as a \emph{front-end filter}:
+\begin{itemize}
+    \item For short sequences (e.g., $N<512$), WASM-SIMD completes the computation entirely on the CPU, avoiding GPU cold-start latency.
+    \item For longer sequences, WebGPU still processes thousands of reads per dispatch, playing to its strength.
+\end{itemize}
+Such hybrid scheduling smooths front-end responsiveness and partially masks WebGPU’s lack of SFUs on small workloads by exploiting CPU and GPU cooperatively.
+
+\section{Community Standardisation and an Open-Source Ecosystem}
+The field lacks a \textbf{browser-native BioGPU benchmark}. Packaging the present WGSL shader and JavaScript harness as an \textbf{open-source NPM module} would let browser and GPU vendors test cache policies on realistic workloads and would enable the bioinformatics community to port other wavefront algorithms (e.g., Smith–Waterman, Needleman–Wunsch, BWA-MEM) to the Web. Early open-sourcing would also encourage API discussion and best-practice consolidation across browsers, reducing the risk of breaking changes as the standard evolves.
+
+Pursuing these threads—double-precision support, WASM–WebGPU hybridity, and an open benchmark suite—will further democratise high-performance genomic computing on the Web and extend the impact of the optimisations proposed in this work.
+
+\chapter{Conclusion}
+This work presents the \textbf{first full browser-side implementation of the Pair-HMM Forward algorithm using WebGPU}. We systematically evaluate four versions—C++, CUDA, WebGPU-Baseline, and WebGPU-Optimized—on three heterogeneous GPUs (RTX 2070 Super, Apple M1, and Intel UHD 620) and analyse both performance and numerical correctness.
+
+\section{Core Contributions}
+\begin{enumerate}
+    \item \textbf{Three complementary browser-side optimizations.} \\
+    \emph{Single-CommandBuffer batch submission}, \emph{Dynamic Uniform Offsets}, and a \emph{Workgroup Cache} jointly reduce CPU–GPU round-trips, shrink BindGroup reconstruction overhead, and hide global-memory latency by relocating hot constants to \texttt{var<workgroup>}. For a sequence length of $N=10^5$ on the RTX 2070 Super, these optimizations cut runtime from 467 s (Baseline) to \textbf{3.3 s}, reaching \textbf{84\% of CUDA speed}.
+    \item \textbf{Cross-device validation.} \\
+    The identical WGSL shader delivers \textbf{4$\times$–222$\times$} acceleration over single-threaded CPU on the Intel UHD 620 (which lacks SFUs and has only 30 GB/s memory bandwidth) and \textbf{9$\times$–463$\times$} on the Apple M1 GPU. This confirms that the proposed optimizations are \textbf{vendor-agnostic}: any browser supporting WebGPU can provide GPU-level speed without driver installation.
+    \item \textbf{A reproducible workflow for porting bioinformatics DP algorithms to the browser.} \\
+    We supply WGSL examples and optimization guidelines that address known bottlenecks, filling a gap in the literature for systematic WebGPU tuning and charting a feasible path toward \textbf{Web-native bioinformatics tools}.
+\end{enumerate}
+
+\section{Academic and Industrial Impact}
+WebGPU is \textbf{not merely a replacement} for ``install a CUDA SDK or rent a cloud A100.'' Rather, it enables real-time computation inside a browser sandbox, letting researchers perform Pair-HMM likelihood estimation on any laptop or even an integrated-GPU device—\textbf{with no driver setup and full data privacy}. This lowers the barrier for classroom demonstrations, clinical front-end systems, and interactive open-source platforms.
+
+In short, the \textbf{``driver-free, cross-hardware, on-device''} model demonstrated here sketches a concrete roadmap for Web-native scientific GPU computing. As browser APIs and GPU architectures evolve, we expect that within the next three to five years many genomics tools will become ``open-the-browser-and-run,'' further democratizing bioinformatics and accelerating digital transformation in healthcare.
+
+\chapter{References}
+\begin{enumerate}
+    \item Banerjee, S. S., et al. (2017). \emph{Hardware Acceleration of the Pair-HMM Algorithm for DNA Variant Calling}. Proc. 27th International Conference on Field Programmable Logic and Applications (FPL), 165–172. \url{https://doi.org/10.23919/FPL.2017.8056826}
+    \item Durbin, R., Eddy, S. R., Krogh, A., \& Mitchison, G. (1998). \emph{Biological Sequence Analysis: Probabilistic Models of Proteins and Nucleic Acids}. Cambridge University Press.
+    \item Ghosh, P., et al. (2018). \emph{Web3DMol: Interactive Protein Structure Visualization Based on WebGL}. Bioinformatics, 34(13), 2275–2277. \url{https://doi.org/10.1093/bioinformatics/bty534}
+    \item Google Chrome Team. (2024). \emph{Chrome’s 2024 Recap for Devs: Re-imagining the Web with AI}. Chrome for Developers Blog. \url{https://developer.chrome.com/blog/chrome-2024-recap}
+    \item Illumina. (2024). \emph{NovaSeq X Series Reagent Kits – Specifications}. \url{https://www.illumina.com/systems/sequencing-platforms/novaseq-x-plus/specifications.html}
+    \item Jones, B. (2023). \emph{Toji.dev Blog Series: WebGPU Best Practices}. \url{https://toji.dev/webgpu-best-practices/}
+    \item Klöckner, A., Pinto, N., Lee, Y., Catanzaro, B., Ivanov, P., \& Fasih, A. (2012). \emph{PyCUDA and PyOpenCL: A Scripting-Based Approach to GPU Run-Time Code Generation}. Parallel Computing, 38(3), 157–174. \url{https://doi.org/10.1016/j.parco.2011.09.001}
+    \item Krampis, K., Booth, T., Chapman, B., et al. (2012). \emph{Cloud BioLinux: Pre-configured and On-Demand Bioinformatics Computing for the Genomics Community}. BMC Bioinformatics, 13, 42. \url{https://doi.org/10.1186/1471-2105-13-42}
+    \item Langmead, B., Trapnell, C., Pop, M., \& Salzberg, S. L. (2009). \emph{Ultrafast and Memory-Efficient Alignment of Short DNA Sequences to the Human Genome}. Genome Biology, 10(3), R25. \url{https://doi.org/10.1186/gb-2009-10-3-r25}
+    \item Li, H., Handsaker, B., Wysoker, A., et al. (2009). \emph{The Sequence Alignment/Map Format and SAMtools}. Bioinformatics, 25(16), 2078–2079. \url{https://doi.org/10.1093/bioinformatics/btp352}
+    \item Li, H., \& Durbin, R. (2010). \emph{Fast and Accurate Long-Read Alignment with Burrows-Wheeler Transform}. Bioinformatics, 26(5), 589–595. \url{https://doi.org/10.1093/bioinformatics/btq698}
+    \item Liu, Y., Wirawan, A., \& Schmidt, B. (2013). \emph{CUDASW++ 3.0: Accelerating Smith-Waterman Protein Database Search by Coupling CPU and GPU SIMD Instructions}. BMC Bioinformatics, 14, 117. \url{https://doi.org/10.1186/1471-2105-14-117}
+    \item McKenna, A., Hanna, M., Banks, E., et al. (2010). \emph{The Genome Analysis Toolkit: A MapReduce Framework for Analyzing Next-Generation DNA Sequencing Data}. Genome Research, 20(9), 1297–1303. \url{https://doi.org/10.1101/gr.107524.110}
+    \item MDN Web Docs. (2025). \emph{WebGPU API}. \url{https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API}
+    \item Schmidt, B., et al. (2024). \emph{gpuPairHMM: High-Speed Pair-HMM Forward Algorithm for DNA Variant Calling on GPUs}. arXiv preprint, arXiv:2411.11547. \url{https://arxiv.org/abs/2411.11547}
+    \item Stone, J. E., Gohara, D., \& Shi, G. (2010). \emph{OpenCL: A Parallel Programming Standard for Heterogeneous Computing Systems}. Computing in Science \& Engineering, 12(3), 66–73. \url{https://doi.org/10.1109/MCSE.2010.69}
+    \item TensorFlow.js Team. (2024). \emph{WebGPU Backend for TensorFlow.js}. \url{https://www.tensorflow.org/js/guide/webgpu}
+    \item W3C. (2024). \emph{WebGPU Specification: Candidate Recommendation Snapshot}. \url{https://www.w3.org/TR/2024/CR-webgpu-20241219/}
+\end{enumerate}
+
+\end{document}
