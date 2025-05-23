@@ -31,7 +31,7 @@
 本研究以周育晨（2024）公開之 C++／CUDA 程式為基準對照，採以下 **三項專屬優化策略** 以對應前述瓶頸：
 
 1. **單一 CommandBuffer 批次提交**：將多次對角線運算收攏至一次 `queue.submit()`，消除大量 API 往返延遲。
-2. **Dynamic Uniform Offset**：將靜態參數置於 uniform buffer，以動態偏移 (dynamic offset) 避免重建 BindGroup。
+2. **Dynamic Uniform Offset**：將靜態參數置於 uniform buffer，以動態偏移 (dynamic offset) 消除了多顆 UBO 的配置與綁定。
 3. **Workgroup Cache**：將 emission／transition 常量顯式搬入 `var<workgroup>`，降低跨對角線反覆讀取全域記憶體的成本。
 
 在 NVIDIA RTX 2070 Super 上針對序列長度 100–100 000 測試，**WebGPU-Optimized** 相較 Baseline 加速 6.8–142×，並達到 CUDA 11–84 % 的效能；在 Apple M1 與 Intel UHD 620 上亦對純 CPU 提供 4–463× 加速（序列長度 ≥ 1 000），**Log-Likelihood 誤差低於 10⁻⁵**。
@@ -182,7 +182,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 
 ##### (四) Baseline 的暫行折衷
 
-面對上述限制, Baseline 採取三項折衷措施。首先, 以「一次 compute pass 對應一條 wavefront」的方法, 用 GPU 指令天然序列化效果替代 cudaDeviceSynchronize(), 確保計算順序。其次, 在每條 wavefront 重新建立 BindGroup, 以顯式切換三顆 DP Buffer 的角色, 雖有 API 開銷, 卻能保證 Shader 讀寫方向正確。最後, 為避免額外負擔, Baseline 只在初始化階段建立一支 ComputePipeline, 全程重用同一 ComputePassEncoder, 至少省下重複編譯 WGSL 與重新產生 Pipeline State 的成本。
+面對上述限制, Baseline 採取三項折衷措施。首先, 以「一次 compute pass 對應一條 wavefront」的方法, 用 GPU 指令天然序列化效果替代 cudaDeviceSynchronize(), 確保計算順序。其次, 在每條 wavefront 重新建立 BindGroup, 以顯式切換三顆 DP Buffer 的角色, 雖有 API 開銷, 卻能保證 Shader 讀寫方向正確。最後，Baseline 僅在初始化階段建立一支 ComputePipeline 並於後續重用；然而依 WebGPU 規格，Compute Pass 仍須 per-wavefront 新建，因而省下了重複編譯 WGSL 與重新產生 Pipeline State 的成本，但無法完全避免 CommandEncoder / ComputePassEncoder 的建立開銷。
 
 ##### (五) Baseline 效能概況
 
@@ -199,7 +199,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 
 如 **圖 3-4** 所示，我們將原本 2 N 次 `dispatchWorkgroups` 先錄進同一支 `CommandBuffer`，最終僅以一次 `queue.submit()` 送交 GPU，實測可消除超過 99.99 % 的 IPC 往返延遲。
 
-**CommandEncoder 與指令流。** 在 WebGPU 中，`CommandEncoder` 負責錄製 `beginComputePass`、`dispatchWorkgroups`、`copyBufferToBuffer`、`end` 等命令。當呼叫 `encoder.finish()` 產生 `GPUCommandBuffer` 並以 `device.queue.submit([commandBuffer])` 提交後，GPU 會依序執行所有已錄製指令而無需 CPU 介入。只有在程式刻意呼叫 `await device.queue.onSubmittedWorkDone()` 時，JavaScript 執行緒才會同步等待整條指令流完成。
+**CommandEncoder 與指令流。** 在 WebGPU 中，`CommandEncoder` 負責錄製 `beginComputePass`、`dispatchWorkgroups`、`copyBufferToBuffer`、`end` 等命令。當呼叫 `encoder.finish()` 產生 `GPUCommandBuffer` 並以 `device.queue.submit([commandBuffer])` 提交後，GPU 會依序執行所有已錄製指令而無需 CPU 介入。
 
 **傳統多次提交的痛點。** Baseline 為了維持對角線依賴，使用 `for` 迴圈逐條建構 encoder、`submit`、`await`，再動態重建下一條 encoder。對長度 N 的序列將產生 2 N 次「submit–barrier–encoder」流程。每次等待不僅引發 CPU–GPU IPC 與瀏覽器排程延遲，也迫使 JavaScript 執行緒反覆進入 idle/active 狀態，整體開銷顯著。
 
@@ -210,20 +210,33 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 多條 wavefront 的 `dispatchWorkgroups` 先於 Host 端錄製入同一 `CommandBuffer`，最終一次 `queue.submit()` 送交 GPU，省卻 2 N 次 IPC 與排程開銷。
 
 ---
-##### 3.3.3.2 Dynamic Uniform Offset──減少常量更新成本
 
-如 **圖 3-5** 所示，我們將每條反對角線 (diag) 的常量 (len, diag, numGroups) 以 256 B 對齊連續排入單顆 UBO，`dispatch` 時僅靠 dynamic offset 切換；此舉使 BindGroup 重建次數從「每回合 10+」降至 3，單次延遲減半並大幅削弱 Baseline 的第二瓶頸。
+##### 3.3.3.2 Dynamic Uniform Offset──降低常量更新開銷
 
-**多小 buffer 與重複 BindGroup 問題。** Baseline 在每條對角線都需重建 BindGroup 以切換 `dpPrev / dpCurr / dpNew` 與各類常量 buffer，單次 `createBindGroup()` 必經 **V8 → Blink → Dawn** 多層驗證，耗時 5–15 µs；當 $N=10^{5}$ 時，累積延遲達數秒。
+如 **圖 3-5** 所示，我們將每條反對角線 ( diag ) 的常量  `(len, diag, numGroups)` 以 **256 B 對齊**方式連續寫入單一 Uniform Buffer (UBO)，在 `dispatch` 時透過 **dynamic offset** 切換要使用的區段。  這項改動**僅針對「常量更新」生效**：不再需要替每條 diag 分別配置多顆小型 UBO，也不用變動 BindGroup 的佈局；  然而，我們仍在每條 diag 重新 `createBindGroup()` 以輪替
+`dpPrev / dpCurr / dpNew` 三顆 DP Buffer，因此 **BindGroup 重建次數仍為 2 N**。
 
-**大型 Uniform Buffer 與動態偏移。** WebGPU 允許在 `setBindGroup()` 傳入 dynamic offset (256 B 對齊)。因此我們將上述常量預先塞入 UBO，只需計算
-`offset(diag) = (diag − 1) × UB_ALIGN` 即可切換；重建成本由「每回合 10+ 項 binding」降至「3 項 binding」，平均延遲減半。
+---
+
+**(1) Baseline 的多 Buffer 與頻繁重建**
+
+Baseline 版本在每條對角線都呼叫 `device.createBindGroup()` ——該流程需經V8 → Blink → Dawn 的層層驗證，  一次呼叫約 5–15 µs；當 $N = 10^{5}$ 時，累積延遲達數秒，形成主要瓶頸之一。
+
+**(2) 單一 UBO + 動態偏移**
+
+WebGPU 允許在 `setBindGroup()` 傳入
+「256 B 對齊的 dynamic offset」。  我們將所有常量預先塞入**同一顆** UBO，只需計算
+
+```text
+offset(diag) = (diag − 1) × 256 B
+````
+
+即可切換。這樣做**消除了多顆 UBO 的配置與綁定**，並把每次 `writeBuffer()` 的目標對象固定為同一區塊；雖然 **`createBindGroup()` 仍照舊執行**，
+單次驗證工作量因條目數減少而略有下降，實測可縮短單次呼叫約 20–30 ％。
 
 ![dyn\_offset](https://hackmd.io/_uploads/BkEtmfsbxl.png)
-**圖 3-5　Dynamic Uniform Offset 資料佈局**
-每條反對角線常量 (len, diag, numGroups) 以 256 B 為對齊單位連續存放；`dispatch` 時僅調整 dynamic offset，無須重建 BindGroup。
-
-
+**圖 3-5　Dynamic Uniform Offset 的資料佈局**
+每條對角線的常量 `(len, diag, numGroups)` 以 256 B 為對齊單位連續存放；`dispatch` 時僅調整 dynamic offset，無須重新配置小型 UBO。
 
 ---
 
@@ -243,7 +256,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 | 指標                  |  Baseline  | Optimized |     降幅     |
 | ------------------- | :--------: | :-------: | :--------: |
 | CPU↔GPU 往返次數        |     2 N    |     1     | − 99.999 % |
-| BindGroup 重建次數      | 2 N × ≥ 10 |  2 N × 3  |   − 70 %   |
+| BindGroup 綁定項數      | 2 N × ≥ 10 |  2 N × 7  |   − 30 %   |
 | Storage Buffer 讀取／格 |    6 – 9   |     1     |   − 83 %   |
 | 執行時間（N = 100 000）   |    466 s   |    74 s   |   − 84 %   |
 
@@ -274,7 +287,7 @@ CUDA 只需在兩條 wavefront 之間交換三個 `float*` 指標，就能把 `p
 
 #### 4.2.1　RTX 2070 Super：四版本時間與加速比
 
-繼而說明計時方法，我們將壁鐘時間 $T(N)$ 定義為「從主程式呼叫演算法至裝置回傳結果之間的總經過時間」，此範圍涵蓋 GPU 記憶體配置與 `queue.submit()`，但排除了 shader 編譯，以避免不同瀏覽器快取策略造成誤差。基於這一定義，**表 4-2** 列出 C++、CUDA、WebGPU-Init 與 WebGPU-Opt 在四種序列長度下的實測值，以及相對速度
+繼而說明計時方法，我們將壁鐘時間 $T(N)$ 定義為「從主程式呼叫演算法至裝置回傳結果之間的總經過時間」，此範圍涵蓋 GPU 記憶體配置與 `queue.submit()`。基於這一定義，**表 4-2** 列出 C++、CUDA、WebGPU-Init 與 WebGPU-Opt 在四種序列長度下的實測值，以及相對速度
 $S_{X\leftarrow Y}(N)$。
 
 $$
