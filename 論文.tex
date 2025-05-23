@@ -1,22 +1,145 @@
-\documentclass[12pt]{report}
-\usepackage[utf8]{inputenc}
-\usepackage{xeCJK}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{amsmath,amssymb}
-\usepackage{geometry}
-\usepackage{tabularx}
-\geometry{a4paper, margin=2.5cm}
-\setlength{\parskip}{0.5em}
-\setlength{\parindent}{2em}
+\documentclass[PhD]{PHlab-thesis}
+
+\addbibresource{thesis.bib}
+
+\newcommand*\Department中文{資訊工程學系}
+\newcommand*\Department英文{Department of Computer Science and Information Engineering}
+
+\newcommand*\ThesisTitle中文{視覺化轉錄因子結合位點DNA\退{1}甲基化的新方法：MethylSeqLogo}
+\newcommand*\ThesisTitle英文{MethylSeqLogo: A Novel Method for the Vizualization of DNA Methylation at Transcription Factor Binding Sites}
+
+\newcommand*\Student中文{王尊緯}
+\newcommand*\Student英文{Tsun-wai Wang}
+
+\newcommand*\Advisor中文{賀保羅}
+\newcommand*\Advisor英文{Paul Horton}
+
+%% 果有共同指導老師可以用:
+%% \newcommand*\CoAdvisorA中文{}
+%% \newcommand*\CoAdvisorA英文{}
+%% \newcommand*\CoAdvisorB中文{}
+%% \newcommand*\CoAdvisorB英文{}
+
+
+\newcommand*\YearMonth英文{July, 2025}
+\newcommand*\YearMonth中文{１１4年７月}
+
+\pagestyle{fancy}% Use fancyhdr
 \begin{document}
 
-\chapter{Abstract}
+
+\newcommand*\Keywords英文{bioinformatics, genomics, string algorithms}
+\newcommand*\Abstract英文{%
 As GPU acceleration becomes increasingly prevalent in bioinformatics, conventional CUDA/OpenCL solutions still require driver installation and are locked to specific hardware, hindering online teaching and front-end clinical analysis. Ratified in 2024, \textbf{WebGPU} unifies Vulkan, Direct3D 12, and Metal behind a single JavaScript API and offers three decisive advantages: zero installation, cross-hardware portability, and on-device data residency. Using the compute-intensive \textbf{Pair-Hidden Markov Model Forward (Pair-HMM Forward)} algorithm as a case study, we assess the performance and viability of WebGPU.
 
 Starting from \textbf{Chou, Yu-Chen’s (2024)} open-source C++/CUDA implementation, we first develop a WebGPU Baseline. We then tackle its primary bottlenecks—frequent CPU$\leftrightarrow$GPU round-trips, costly BindGroup reconstruction, and high global-memory latency—by successively introducing (i) single-CommandBuffer batch submission, (ii) Dynamic Uniform Offsets, and (iii) a Workgroup Cache, yielding \textbf{WebGPU-Optimized}. Across an NVIDIA RTX 2070 Super, Apple M1, and Intel UHD 620, and for sequence lengths from $10^2$ to $10^5$, the optimized version delivers \textbf{substantial speed-ups (over 100$\times$ in the best case)} and attains \textbf{more than 80 \% of CUDA’s throughput}. The relative Log-Likelihood error remains below $10^{-5}$ on all devices, and in the absence of an NVIDIA GPU our method still accelerates single-threaded C++ by one to two orders of magnitude.
 
-These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Forward within seconds in a browser. We contribute three browser-specific optimization strategies and detailed cross-hardware measurements, laying the groundwork for Web-native genomic analysis tools and promoting the democratization and real-time execution of bioinformatics workloads.
+These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Forward within seconds in a browser. We contribute three browser-specific optimization strategies and detailed cross-hardware measurements, laying the groundwork for Web-native genomic analysis tools and promoting the democratization and real-time execution of bioinformatics workloads.}
+
+
+\newcommand*\Keywords中文{生命科學、基因組、字串演算法}
+\newcommand*\Abstract中文{%
+隨著 GPU 加速在生物資訊領域日漸普及，但傳統 CUDA／OpenCL 解決方案必須安裝驅動並受限於特定硬體，對線上教學與臨床前端分析造成不便。2024 年正式標準化的 WebGPU 透過單一 JavaScript API 對接 Vulkan／D3D12／Metal，兼具「免安裝、跨硬體、資料留在本機」三大優勢。本研究以高強度 Pair-Hidden Markov Model Forward (Pair-HMM Forward) 演算法為例，評估 WebGPU 的效能與可行性。
+
+我們以周育晨（2024）公開之 C++／CUDA 程式為基準，首先撰寫 WebGPU Baseline，接著針對 CPU↔GPU 往返、BindGroup 重建與全域記憶體延遲等瓶頸，依序導入「單一 CommandBuffer 批次提交」「Dynamic Uniform Offset」及「Workgroup Cache」，形成 WebGPU-Optimized。在 NVIDIA RTX 2070 Super、Apple M1 與 Intel UHD 620 測試長度 10²–10⁵ 的序列後，Optimized 相較 Baseline 呈現 顯著加速（最高逾百倍），執行速度可達 CUDA 的八成以上；三款裝置的 Log-Likelihood 相對誤差均低於 10⁻⁵，且在無 NVIDIA GPU 時對單執行緒 C++ 亦提供多達數十至數百倍的加速。
+
+本研究證實僅憑 JavaScript + WGSL，即能於瀏覽器中於秒級完成 Pair-HMM Forward 計算，並提出三項瀏覽器端專屬優化策略及跨硬體實測結果。此成果為 Web-native 基因體分析工具的普及奠定基礎，推動生物資訊運算的民主化與即時化。
+}
+
+\newcommand*\Acknowledgements{%
+感謝我...}
+
+
+
+\input{frontmatter}% 封面頁, 口委中英文簽名單, 誌謝, 中英文摘要, 論文目錄, 圖表目錄
+
+
+%────────────────────  List of Symbols  ────────────────────
+\renewcommand\nomgroup[1]{%
+  \item[\bfseries
+  \ifstrequal{#1}{A}{General}{%
+  \ifstrequal{#1}{Z}{Gene/Protein Names}%
+  }]}
+
+\nomenclature[A]{$\lg$}{Logarithm base 2}
+\nomenclature[A]{KL\ Divergence}{Kullback-Liebler Divergence}
+\nomenclature[Z]{Myc}{MYC proto-oncogene}
+\nomenclature[Z]{USF-1}{Upstream stimulatory factor 1}
+
+\printnomenclature[5cm]
+
+\newpage
+\setcounter{page}{1}
+\pagenumbering{arabic}
+
+
+
+\chapter{Introduction}
+DNA methylation is a major component of the epigenetic state of cells, as as such plays a critial role in the differentiation and maintenance of cell type.  Consequentially, aberrant DNA methylation plays a central role in cancer --- a manifestation of defective regulation of cell behavior.
+
+
+\chapter{Related Work}
+The characteristics of NuMT insertion sites have been analyzed in depth~\cite{TFH12}.
+Add your related works here.
+
+Schneider \& Stephens introduced sequence logos many years ago~\cite{SS90}.
+
+
+
+\chapter{Methods}
+\section{Mathematical Model}
+\subsection{Notation}
+The notation used in this thesis is summarized in table~\ref{tab:notation}.
+
+\subsection{Likelihood Calculation}
+Our model assumes the data follows a standard normal distribution $��(μ,σ²)$, so the likelihood function is:
+
+\begin{align*}
+ℒ  \;=&\;\;  \frac{1}{σ\sqrt{2π}}\, \exp\Big( \frac{-(x-μ)²}{2σ²}\Big)\\[.5ex]% .5ex adds extra vertical height
+     ∝&\;\;  σ⁻¹\, \exp\big( -½\,z²)  \hspace{1cm} \text{where~~} z ≝ \frac{x-μ}{σ}
+\end{align*}
+
+
+
+\begin{table}
+\begin{tabularx}{0.9\linewidth}{lX}
+Notation                                               &  Description\\
+\toprule
+$P_{\text{meth}\,|\,\textsf{context,BG}}$                    &  The background probability of methylation by context.\\[.3ex]
+$n_{\textsf{context},\,i}$                                 &  The number of cytosines (with sufficient read coverage)\newline of the given context occurring at position $i$ in the set of TFBS.\\[.3ex]
+$\overline{v}\,|\,\scriptstyle{\textsf{context},i}$  & The average methylation values of those cytosines.\\
+\bottomrule
+\end{tabularx}
+\caption{Summary of notation used in this thesis.}
+\label{tab:notation}
+\end{table}
+
+\section{Proposed Scheme}
+Write a bunch of stuff here.
+
+	
+\chapter{Results}
+Describe your results here.
+
+
+\chapter{Discussion}
+Discussion the significance or your results.
+
+
+\section{Future Work}
+
+
+\chapter{Conclusion}
+Add your conclusions here.
+
+
+\newpage
+\AddToContents{Bibliography}
+\printbibliography
+
+
+\end{document}
+
 
 \chapter{Introduction}
 \section{Background}
@@ -79,6 +202,7 @@ WebGPU’s compute pipeline is written in \textbf{WGSL (WebGPU Shading Language)
     \caption{Mapping between the WebGPU API and native back ends}
     \label{fig:webgpu_stack}
 \end{figure}
+
 
 JavaScript/TypeScript invokes WebGPU through a unified interface. The browser selects Vulkan (Linux), Direct3D 12 (Windows), or Metal (macOS/iOS) as the actual back end and submits commands to the GPU.
 
