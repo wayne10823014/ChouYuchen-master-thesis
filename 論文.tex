@@ -5,8 +5,8 @@
 \newcommand*\Department中文{資訊工程學系}
 \newcommand*\Department英文{Department of Computer Science and Information Engineering}
 
-\newcommand*\ThesisTitle中文{視覺化轉錄因子結合位點DNA\退{1}甲基化的新方法：MethylSeqLogo}
-\newcommand*\ThesisTitle英文{MethylSeqLogo: A Novel Method for the Vizualization of DNA Methylation at Transcription Factor Binding Sites}
+\newcommand*\ThesisTitle中文{WebGPU 於高效能生物資訊計算：瀏覽器端 Pair-HMM Forward 演算法之優化}
+\newcommand*\ThesisTitle英文{ WebGPU for High-Performance Bioinformatics Computing: Browser-Based Optimization of the Pair-HMM Forward Algorithm}
 
 \newcommand*\Student中文{王尊緯}
 \newcommand*\Student英文{Tsun-wai Wang}
@@ -75,73 +75,6 @@ These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Fo
 
 
 \chapter{Introduction}
-DNA methylation is a major component of the epigenetic state of cells, as as such plays a critial role in the differentiation and maintenance of cell type.  Consequentially, aberrant DNA methylation plays a central role in cancer --- a manifestation of defective regulation of cell behavior.
-
-
-\chapter{Related Work}
-The characteristics of NuMT insertion sites have been analyzed in depth~\cite{TFH12}.
-Add your related works here.
-
-Schneider \& Stephens introduced sequence logos many years ago~\cite{SS90}.
-
-
-
-\chapter{Methods}
-\section{Mathematical Model}
-\subsection{Notation}
-The notation used in this thesis is summarized in table~\ref{tab:notation}.
-
-\subsection{Likelihood Calculation}
-Our model assumes the data follows a standard normal distribution $��(μ,σ²)$, so the likelihood function is:
-
-\begin{align*}
-ℒ  \;=&\;\;  \frac{1}{σ\sqrt{2π}}\, \exp\Big( \frac{-(x-μ)²}{2σ²}\Big)\\[.5ex]% .5ex adds extra vertical height
-     ∝&\;\;  σ⁻¹\, \exp\big( -½\,z²)  \hspace{1cm} \text{where~~} z ≝ \frac{x-μ}{σ}
-\end{align*}
-
-
-
-\begin{table}
-\begin{tabularx}{0.9\linewidth}{lX}
-Notation                                               &  Description\\
-\toprule
-$P_{\text{meth}\,|\,\textsf{context,BG}}$                    &  The background probability of methylation by context.\\[.3ex]
-$n_{\textsf{context},\,i}$                                 &  The number of cytosines (with sufficient read coverage)\newline of the given context occurring at position $i$ in the set of TFBS.\\[.3ex]
-$\overline{v}\,|\,\scriptstyle{\textsf{context},i}$  & The average methylation values of those cytosines.\\
-\bottomrule
-\end{tabularx}
-\caption{Summary of notation used in this thesis.}
-\label{tab:notation}
-\end{table}
-
-\section{Proposed Scheme}
-Write a bunch of stuff here.
-
-	
-\chapter{Results}
-Describe your results here.
-
-
-\chapter{Discussion}
-Discussion the significance or your results.
-
-
-\section{Future Work}
-
-
-\chapter{Conclusion}
-Add your conclusions here.
-
-
-\newpage
-\AddToContents{Bibliography}
-\printbibliography
-
-
-\end{document}
-
-
-\chapter{Introduction}
 \section{Background}
 High-throughput sequencing (Next-Generation Sequencing, NGS) has pushed the scale and complexity of genomic data to grow exponentially, creating unprecedented demands on computational performance in bioinformatics. The \textbf{Pair Hidden Markov Model (Pair-HMM) Forward algorithm}, which simultaneously supports sequence alignment, genotype calling, and variant detection, is a core computation in many genomic pipelines.
 
@@ -160,7 +93,7 @@ Although WebGPU promises zero installation, cross-hardware portability, and on-d
 These factors magnify WebGPU’s still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: \textbf{Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?}
 
 \section{Methods and Key Results}
-Using \textbf{Chou, Yu-Chen’s (2024)} open-source C++/CUDA program as the reference, we introduce three WebGPU-specific optimizations to address the above bottlenecks:
+Using \textbf{Chou, Yu-Chen's (2024)} open-source C++/CUDA program as the reference, we introduce three WebGPU-specific optimizations to address the above bottlenecks:
 \begin{enumerate}
     \item \textbf{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
     \item \textbf{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
@@ -171,7 +104,8 @@ On an NVIDIA RTX 2070 Super with sequence lengths 100–100,000, \textbf{WebGPU-
 \section{Conclusions and Contributions}
 This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The three complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for \textbf{``open-the-browser-and-compute'' genomic analysis}, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
 
-\chapter{Literature Review}
+
+\chapter{Related Work}
 \section{High-Performance Computing Requirements in Bioinformatics}
 \subsection{Next-Generation Sequencing and Its Computational Challenges}
 The rapid advance of Next-Generation Sequencing (NGS) has driven the scale and complexity of genomic data to grow exponentially, placing unprecedented demands on computational performance. According to Illumina’s specifications, a NovaSeq X Plus equipped with a 25 B flow cell operating in dual-lane mode can generate roughly \textbf{52 billion ($5.2 \times 10^{10}$) paired-end reads (2 $\times$ 150 bp)} in a single 48-hour run, equivalent to \textbf{$3.25 \times 10^{11}$ bases per hour} (Illumina, 2024). Such data volumes require massive sequence alignment and probabilistic computation well beyond what traditional CPU-only architectures can sustain.
@@ -197,13 +131,12 @@ On 19 December 2024, WebGPU entered the \textbf{W3C Candidate Recommendation Sna
 
 WebGPU’s compute pipeline is written in \textbf{WGSL (WebGPU Shading Language)}, which supports high-performance matrix operations and explicit memory control, making it suitable for compute-intensive workloads.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{WebGPU 架構對應示意.png}
     \caption{Mapping between the WebGPU API and native back ends}
-    \label{fig:webgpu_stack}
+    \label{fig:enter-label}
 \end{figure}
-
-
 JavaScript/TypeScript invokes WebGPU through a unified interface. The browser selects Vulkan (Linux), Direct3D 12 (Windows), or Metal (macOS/iOS) as the actual back end and submits commands to the GPU.
 
 \subsection{High-Performance Computing Potential of WebGPU}
@@ -229,6 +162,8 @@ The literature reveals three key shortcomings:
     \item \textbf{Insufficient cross-hardware evaluations} (NVIDIA, Apple, Intel) to gauge WebGPU’s generality. Mainstream tools like GATK HaplotypeCaller require CUDA and thus NVIDIA drivers, limiting deployment in classrooms or resource-constrained environments; cloud solutions raise latency and privacy concerns.
 \end{enumerate}
 By porting \textbf{Chou, Yu-Chen’s (2024)} CUDA implementation to WebGPU, this study proposes three browser-side optimisations—\textbf{single-CommandBuffer batch submission, Dynamic Uniform Offsets, and a Workgroup Cache}—and validates their performance and accuracy across multiple hardware platforms. The results close the research gap in WebGPU bioinformatics applications and lay the foundation for \textbf{driver-free, cross-hardware, on-device genomic analysis tools}.
+
+
 
 \chapter{Methods}
 \section{Mathematical Model}
@@ -281,10 +216,12 @@ The Pair-HMM Forward recursion must advance along the anti-diagonals (wavefronts
     \item \textbf{Time complexity} is $\mathcal{O}(mn)$.
 \end{enumerate}
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{Pair-HMM Forward 的計算沿反對角線 .png}
     \caption{Illustration of wavefront computation in the Pair-HMM Forward algorithm}
-    \label{fig:wavefront}
+    \label{fig:enter-label}
 \end{figure}
 
 Left: recursion dependencies of the three hidden states M/I/D. Right: yellow arrows indicate batched progression along anti-diagonals; red, green, and blue squares represent the current wavefront’s M, I, and D states, respectively.
@@ -309,10 +246,11 @@ In contrast, WebGPU lacks a device-side global barrier; synchronisation must ret
 
 For a read length of $N$, this inevitably triggers \textbf{2$N$ CPU$\leftrightarrow$GPU round-trips}, which becomes the first bottleneck of the Baseline implementation.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{4. 全域同步差異圖.png}
     \caption{Comparison of global synchronisation in CUDA and WebGPU}
-    \label{fig:global_sync}
+    \label{fig:enter-label}
 \end{figure}
 
 CUDA can insert a \emph{global} barrier entirely on the GPU; WebGPU must return to the host and issue a new \texttt{dispatch} to achieve global synchronisation.
@@ -332,10 +270,11 @@ This call traverses \textbf{V8 $\rightarrow$ Blink $\rightarrow$ Dawn $\rightarr
 
 \textbf{Figure 3-3} illustrates that a single \texttt{createBindGroup()} passes through multiple IPC and validation layers, so for $N=10^5$ the accumulated delay can reach tens of seconds—Baseline bottleneck \#2.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{3. WebGPU 多層 IPC／驗證路徑.png}
     \caption{Multi-layer IPC/validation path for binding a WebGPU storage buffer}
-    \label{fig:ipc_path}
+    \label{fig:enter-label}
 \end{figure}
 
 Compared with CUDA’s direct ``Host $\rightarrow$ VRAM'' path, WebGPU must cross three extra bridges, raising the delay of each \texttt{createBindGroup()} to 5–15 $\mu$s.
@@ -400,10 +339,11 @@ The GPU can then execute from start to finish without CPU stalls; driver validat
 
 Compressing 2\emph{N} IPC events into 1 shortens total runtime markedly, proving the value of batch submission.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{1. 單一 CommandBuffer 示意圖.png}
     \caption{Single-CommandBuffer batch-submission workflow}
-    \label{fig:cmd_buffer}
+    \label{fig:enter-label}
 \end{figure}
 
 Multiple wavefront \texttt{dispatchWorkgroups} calls are first recorded into one \texttt{CommandBuffer}; the host sends the buffer to the GPU with a single \texttt{queue.submit()}, removing 2\emph{N} rounds of IPC and scheduling overhead.
@@ -437,10 +377,11 @@ This removes buffer churn and keeps every \texttt{writeBuffer()} targeting the s
 
 Although \texttt{createBindGroup()} is still invoked, each validation now checks fewer entries, reducing per-call time by roughly 20–30\%.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{2. Dynamic Offset 佈局圖.png}
     \caption{Data layout for Dynamic Uniform Offsets}
-    \label{fig:dyn_offset}
+    \label{fig:enter-label}
 \end{figure}
 
 Each wavefront’s constants \texttt{(len, diag, numGroups)} occupy a 256-byte slot in a shared UBO.
@@ -489,6 +430,7 @@ On an RTX 2070 Super the runtime drops from 466 s to \textbf{74 s}, an 84\% redu
 
 On the RTX 2070 Super, the WebGPU-Optimized version lags CUDA by only 19\% for a 100,000-base sequence yet remains nearly three orders of magnitude faster than single-threaded CPU execution—demonstrating that near-native GPU performance is achievable inside the browser sandbox.
 
+	
 \chapter{Results}
 \section{Experimental Environment}
 To ensure the reproducibility of our performance data, all WebGPU tests were run in \textbf{Chrome 135.0.7049.114}.
@@ -545,28 +487,32 @@ At $N=10^2$, WebGPU-Opt spends time waiting for V8 start-up and IPC, reaching on
 
 As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Workgroup Cache hides constant-access latency, so by $N=10^5$ WebGPU-Opt attains \textbf{84\% of CUDA} with only a 0.53-s gap.
 
-\begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{2070s-1.png}
     \caption{Speed-up of WebGPU-Baseline over CPU on the RTX 2070 Super}
-    \label{fig:2070s-1}
+    \label{fig:enter-label}
 \end{figure}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{2070s-3.png}
     \caption{Speed-up comparison of CUDA and WebGPU-Baseline (CPU = 1.0) on the RTX 2070 Super}
-    \label{fig:2070s-3}
+    \label{fig:enter-label}
 \end{figure}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{2070s-2.png}
     \caption{Speed-up of WebGPU-Optimized versus Baseline on the RTX 2070 Super}
-    \label{fig:2070s-2}
+    \label{fig:enter-label}
 \end{figure}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{2070s-4.png}
     \caption{Overall speed-up of the four versions (CPU / CUDA / Baseline / Optimized) on the RTX 2070 Super}
-    \label{fig:2070s-4}
+    \label{fig:enter-label}
 \end{figure}
 
 \subsection{Apple M1 and Intel UHD 620: Cross-Platform Performance}
@@ -592,19 +538,22 @@ S_{\text{Opt} \leftarrow \text{CPU}}(N) = \frac{T_{\text{CPU}}(N)}{T_{\text{Opt}
 \end{table}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{uhd620.png}
     \caption{WebGPU-Optimized speed-up over CPU on Intel UHD 620}
     \label{fig:uhd620}
 \end{figure}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{m1.png}
     \caption{WebGPU-Optimized speed-up over CPU on Apple M1}
     \label{fig:m1}
 \end{figure}
 
 \begin{figure}[h]
-    % Placeholder: Image not included as per template guidelines
+    \centering
+    \includegraphics[width=0.7\linewidth]{比較不同硬體（RTX 2070 Super、M1、UHD 620）在 N=10⁵ 時的 WebGPU-Optimized 加速比.png}
     \caption{Comparison of WebGPU-Optimized speed-ups (CPU = 1.0) across three GPUs at $N=10^5$}
     \label{fig:cross-hw}
 \end{figure}
@@ -718,6 +667,8 @@ Even so, dynamic offsets cut BindGroup churn and the Workgroup Cache stores high
 
 This demonstrates that our optimisations are vendor-agnostic and can deliver tangible gains on low-end iGPUs, underscoring WebGPU’s software-level potential.
 
+
+
 \chapter{Future Work}
 This study demonstrates that the three WebGPU-oriented optimizations—\textbf{single-CommandBuffer batch submission}, \textbf{Dynamic Uniform Offsets}, and a \textbf{Workgroup Cache}—can reduce the browser-side runtime of Pair-HMM Forward to within a constant factor of native CUDA. While this level of performance already supports online demonstrations and interactive teaching, further improvements remain desirable for large-scale clinical pipelines and cloud back-ends. Accordingly, we outline three promising directions—at the API, algorithm, and ecosystem levels—and explain why each is a logical next step.
 
@@ -776,5 +727,9 @@ In short, the \textbf{``driver-free, cross-hardware, on-device''} model demonstr
     \item TensorFlow.js Team. (2024). \emph{WebGPU Backend for TensorFlow.js}. \url{https://www.tensorflow.org/js/guide/webgpu}
     \item W3C. (2024). \emph{WebGPU Specification: Candidate Recommendation Snapshot}. \url{https://www.w3.org/TR/2024/CR-webgpu-20241219/}
 \end{enumerate}
+\newpage
+\AddToContents{Bibliography}
+\printbibliography
+
 
 \end{document}
