@@ -24,7 +24,7 @@
 
 
 \newcommand*\YearMonth英文{July, 2025}
-\newcommand*\YearMonth中文{１１4年７月}
+\newcommand*\YearMonth中文{１１４年７月}
 
 \pagestyle{fancy}% Use fancyhdr
 
@@ -414,6 +414,9 @@ On an RTX 2070 Super the runtime drops from 466 s to \textbf{74 s}, an 84\% redu
 
 \begin{table}[h]
     \centering
+      \setlength{\tabcolsep}{6pt}
+  \renewcommand{\arraystretch}{1.4}
+  \small
     \begin{tabularx}{\textwidth}{|X|X|X|X|}
         \hline
         Metric & Baseline & Optimized & Reduction \\
@@ -454,7 +457,7 @@ For comparability, the Apple M1 and Intel UHD 620 platforms were upgraded to the
     CPU      & Model                 & Ryzen 7 3700X        & Apple M1 (4P + 4E) & Core i5-8265U \\
     GPU      & SM / FP32 Peak        & 40 SM – 9.1 TFLOPS   & 8 Cores – 2.6 TFLOPS & 24 EU – 0.35 TFLOPS \\
     OS       & Version               & Ubuntu 24.04.2 LTS   & macOS 14.4           & Windows 11 22H2 \\
-    Browser  & Version               & Chrome 135.0.7049.114 & 同左                & 同左 \\
+    Browser  & Version               & Chrome 135.0.7049.114 & same as above                & same as above \\
     CUDA drv & Version               & CUDA Toolkit 12.0 / Driver 550.54 & — & — \\
     \bottomrule
   \end{tabularx}
@@ -584,7 +587,7 @@ Using CUDA on the RTX 2070 S as the golden standard, we compute the relative err
 
   % ---- 增加欄間距 & 放大列高 ----
   \setlength{\tabcolsep}{6pt}          % 欄左右距從預設6pt微調到6pt（可調更大）
-  \renewcommand{\arraystretch}{1.5}    % 列高放大1.2倍
+  \renewcommand{\arraystretch}{1.7}    % 列高放大1.2倍
 
   \small                                % 縮小整張表字級
   \begin{tabularx}{\textwidth}{@{} X c c c c c @{}}
