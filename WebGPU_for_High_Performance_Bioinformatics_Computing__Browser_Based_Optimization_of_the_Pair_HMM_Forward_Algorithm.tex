@@ -59,7 +59,11 @@ These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Fo
 }
 
 \newcommand*\Acknowledgements{%
-感謝我...}
+在此特別感謝賀保羅教授以及在實驗室給予我協助與指導的同學：阮祈翰、楊祐昇、黃書堯、鄭驊軒、鄭煜醴等，在各階段實驗設計與資料收集上提供許多寶貴意見。
+
+同時感謝林宜靜、賴威達、王晴文、許庸袁及陳竑曄，你們在討論分析與程式測試時的協作與支持，讓本研究得以順利完成。
+
+最後，感謝所有關心及協助本研究的師長與同窗，謹此致上由衷謝意。 }
 
 
 
@@ -158,7 +162,7 @@ WebGPU’s compute pipeline is written in \textbf{WGSL (WebGPU Shading Language)
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{WebGPU 架構對應示意.png}
+    \includegraphics[width=0.9\linewidth]{WebGPU 架構對應示意.png}
     \caption{Mapping between the WebGPU API and native back ends}
     \label{fig:webgpu-mapping}
 \end{figure}
@@ -245,7 +249,7 @@ The Pair-HMM Forward recursion must advance along the anti-diagonals (wavefronts
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{Pair-HMM Forward 的計算沿反對角線 .png}
+    \includegraphics[width=0.9\linewidth]{Pair-HMM Forward 的計算沿反對角線 .png}
     \caption{Illustration of wavefront computation in the Pair-HMM Forward algorithm}
     \label{fig:pairhmm-wavefront}
 \end{figure}
@@ -275,7 +279,7 @@ For a read length of $N$, this inevitably triggers \textbf{2$N$ CPU$\leftrightar
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{4. 全域同步差異圖.png}
+    \includegraphics[width=0.9\linewidth]{4. 全域同步差異圖.png}
     \caption{Comparison of global synchronisation in CUDA and WebGPU}
     \label{fig:global-sync-diff}
 \end{figure}
@@ -295,7 +299,7 @@ This call traverses \textbf{V8 $\rightarrow$ Blink $\rightarrow$ Dawn $\rightarr
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{3. WebGPU 多層 IPC／驗證路徑.png}
+    \includegraphics[width=0.9\linewidth]{3. WebGPU 多層 IPC／驗證路徑.png}
     \caption{Multi-layer IPC/validation path for binding a WebGPU storage buffer}
     \label{fig:webgpu-ipc-validation}
 \end{figure}
@@ -318,7 +322,7 @@ Given the above constraints, the Baseline adopts three compromises.
 On an NVIDIA RTX 2070 Super, the Baseline takes \textbf{466 s} for $N=100,000$, roughly two orders of magnitude slower than the CUDA version on the same card.
 Detailed profiling attributes the delay to \textbf{2$N$ IPC synchronisations}, \textbf{2$N$ BindGroup creations}, and \textbf{frequent storage-buffer reads}.These results highlight three architectural bottlenecks unique to WebGPU and motivate the optimisation strategies in the next section: \textbf{reducing host$\leftrightarrow$GPU round-trips, minimising BindGroup churn, and caching hot data in \texttt{var<workgroup>}}.
 
-\subsection{WebGPU Optimized Version (This Work)}
+\subsection{WebGPU Optimized Version }
 To eliminate the Baseline’s three major bottlenecks—
 \begin{enumerate}
     \item frequent host synchronizations,
@@ -347,7 +351,7 @@ Compressing 2\emph{N} IPC events into 1 shortens total runtime markedly, proving
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{1. 單一 CommandBuffer 示意圖.png}
+    \includegraphics[width=0.9\linewidth]{1. 單一 CommandBuffer 示意圖.png}
     \caption{Single-CommandBuffer batch-submission workflow}
     \label{fig:scb-batch-workflow}
 \end{figure}
@@ -383,7 +387,7 @@ Although \texttt{createBindGroup()} is still invoked, each validation now checks
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{2. Dynamic Offset 佈局圖.png}
+    \includegraphics[width=0.9\linewidth]{2. Dynamic Offset 佈局圖.png}
     \caption{Data layout for Dynamic Uniform Offsets}
     \label{fig:dynamic-offset-layout}
 \end{figure}
@@ -436,7 +440,7 @@ On the RTX 2070 Super, the WebGPU-Optimized version lags CUDA by only 19\% for a
 	
 \chapter{Results}
 \section{Experimental Environment}
-To ensure the reproducibility of our performance data, all WebGPU tests were run in \textbf{Chrome 135.0.7049.114}.
+To ensure the reproducibility of our performance data, all WebGPU tests were run in \textbf{Chrome 135.0.9049.114}.
 For comparability, the Apple M1 and Intel UHD 620 platforms were upgraded to the same browser version, and the relevant OS versions are listed alongside.
 
 \textbf{Table 4-1} summarises the three hardware setups and software stacks that serve as our baseline for later experiments.
@@ -457,7 +461,7 @@ For comparability, the Apple M1 and Intel UHD 620 platforms were upgraded to the
     CPU      & Model                 & Ryzen 7 3700X        & Apple M1 (4P + 4E) & Core i5-8265U \\
     GPU      & SM / FP32 Peak        & 40 SM – 9.1 TFLOPS   & 8 Cores – 2.6 TFLOPS & 24 EU – 0.35 TFLOPS \\
     OS       & Version               & Ubuntu 24.04.2 LTS   & macOS 14.4           & Windows 11 22H2 \\
-    Browser  & Version               & Chrome 135.0.7049.114 & same as above                & same as above \\
+    Browser  & Version               & Chrome 135.0.9049.114 & same as above                & same as above \\
     CUDA drv & Version               & CUDA Toolkit 12.0 / Driver 550.54 & — & — \\
     \bottomrule
   \end{tabularx}
@@ -483,17 +487,17 @@ S_{X \leftarrow Y}(N) = \frac{T_Y(N)}{T_X(N)}
         \small    
         $N$ & CPU T (s) & CUDA T (s) & WGPU-Init (s) & \textbf{WGPU-Opt. (s)} & Opt./CPU & Opt./CUDA \\
         \hline
-        $10^2$ & 0.00330 & 0.00229 & 0.135 & \textbf{0.020} & 165$\times$ & 0.11$\times$ \\
+        $10^2$ & 0.00330 & 0.00229 & 0.135 & \textbf{0.020} & 0.165$\times$ & 0.11$\times$ \\
         $10^3$ & 0.327 & 0.0208 & 0.602 & \textbf{0.043} & 7.6$\times$ & 0.49$\times$ \\
         $10^4$ & 32.80 & 0.1908 & 21.83 & \textbf{0.346} & 94.8$\times$ & 0.55$\times$ \\
-        $10^5$ & 3275.6 & 2.7696 & 466.8 & \textbf{3.299} & 993$\times$ & 0.84$\times$ \\
+        $10^5$ & 3275.6 & 2.7696 & 466.8 & \textbf{3.299} & 993$\times$ & 0.94$\times$ \\
         \hline
     \end{tabularx}
     \caption{Runtime and speed-ups of four versions on the RTX 2070 Super}
     \label{tab:rtx_performance}
 \end{table}
 
-\textbf{Key finding:} WebGPU-Optimized sustains \textbf{0.49–0.84$\times$ CUDA performance} while delivering up to \textbf{993$\times$} acceleration over single-threaded CPU.
+\textbf{Key finding:} WebGPU-Optimized sustains \textbf{0.49–0.94$\times$ CUDA performance} while delivering up to \textbf{993$\times$} acceleration over single-threaded CPU.
 
 At $N=10^2$, WebGPU-Opt spends time waiting for V8 start-up and IPC, reaching only 11\% of CUDA.
 As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Workgroup Cache hides constant-access latency, so by $N=10^5$ WebGPU-Opt attains \textbf{84\% of CUDA} with only a 0.53-s gap.
@@ -501,7 +505,7 @@ As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Wo
 % --- RTX 2070 Super：WebGPU-Baseline vs. CPU -------------------
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{2070s-1.png}
+    \includegraphics[width=0.9\linewidth]{2070s-1.png}
     \caption{Speed-up of WebGPU-Baseline over CPU on the RTX 2070 Super}
     \label{fig:2070s-wgpu-baseline}
 \end{figure}
@@ -509,7 +513,7 @@ As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Wo
 % --- RTX 2070 Super：CUDA vs. WebGPU-Baseline ------------------
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{2070s-3.png}
+    \includegraphics[width=0.9\linewidth]{2070s-3.png}
     \caption{Speed-up comparison of CUDA and WebGPU-Baseline (CPU = 1.0) on the RTX 2070 Super}
     \label{fig:2070s-cuda-vs-baseline}
 \end{figure}
@@ -517,7 +521,7 @@ As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Wo
 % --- RTX 2070 Super：WebGPU-Optimized vs. Baseline -------------
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{2070s-2.png}
+    \includegraphics[width=0.9\linewidth]{2070s-2.png}
     \caption{Speed-up of WebGPU-Optimized versus Baseline on the RTX 2070 Super}
     \label{fig:2070s-optimized-vs-baseline}
 \end{figure}
@@ -525,7 +529,7 @@ As the sequence grows, Dynamic Uniform Offsets cut BindGroup rebuilds and the Wo
 % --- RTX 2070 Super：四版本總覽 -------------------------------
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\linewidth]{2070s-4.png}
+    \includegraphics[width=0.9\linewidth]{2070s-4.png}
     \caption{Overall speed-up of the four versions (CPU / CUDA / Baseline / Optimized) on the RTX 2070 Super}
     \label{fig:2070s-overall-4versions}
 \end{figure}
@@ -555,24 +559,25 @@ S_{\text{Opt} \leftarrow \text{CPU}}(N) = \frac{T_{\text{CPU}}(N)}{T_{\text{Opt}
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\linewidth]{uhd620.png}
+    \includegraphics[width=0.9\linewidth]{uhd620.png}
     \caption{WebGPU-Optimized speed-up over CPU on Intel UHD 620}
     \label{fig:uhd620}
 \end{figure}
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\linewidth]{m1.png}
+    \includegraphics[width=0.9\linewidth]{m1.png}
     \caption{WebGPU-Optimized speed-up over CPU on Apple M1}
     \label{fig:m1}
 \end{figure}
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.7\linewidth]{比較不同硬體（RTX 2070 Super、M1、UHD 620）在 N=10⁵ 時的 WebGPU-Optimized 加速比.png}
+    \includegraphics[width=0.9\linewidth]{比較不同硬體（RTX 2070 Super、M1、UHD 620）在 N=10⁵ 時的 WebGPU-Optimized 加速比.png}
     \caption{Comparison of WebGPU-Optimized speed-ups (CPU = 1.0) across three GPUs at $N=10^5$}
-    \label{fig:cross-hw}
+    \label{fig:cross-hw1}
 \end{figure}
+\clearpage
 
 \section{Correctness Verification—Relative Log-Likelihood Error}
 Using CUDA on the RTX 2070 S as the golden standard, we compute the relative error
