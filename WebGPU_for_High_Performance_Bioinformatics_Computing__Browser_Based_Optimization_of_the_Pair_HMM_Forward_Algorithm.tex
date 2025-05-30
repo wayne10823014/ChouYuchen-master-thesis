@@ -41,11 +41,15 @@
 
 \newcommand*\Keywords英文{WebGPU, Pair-Hidden Markov Model, Bioinformatics Acceleration}
 \newcommand*\Abstract英文{%
-As GPU acceleration becomes increasingly prevalent in bioinformatics, conventional CUDA/OpenCL solutions still require driver installation and are locked to specific hardware, hindering online teaching and front-end clinical analysis. Ratified in 2024, \textbf{WebGPU} unifies Vulkan, Direct3D 12, and Metal behind a single JavaScript API and offers three decisive advantages: zero installation, cross-hardware portability, and on-device data residency. Using the compute-intensive \textbf{Pair-Hidden Markov Model Forward (Pair-HMM Forward)} algorithm as a case study, we assess the performance and viability of WebGPU.
+As GPU acceleration becomes increasingly prevalent in bioinformatics, conventional CUDA/OpenCL solutions still require driver installation and are locked to specific hardware, hindering online teaching and front-end clinical analysis. Ratified in 2024, \textbf{WebGPU} unifies Vulkan, Direct3D 12, and Metal behind a single JavaScript API, offering three decisive advantages: zero installation, cross-hardware portability, and on-device data residency. Using the compute-intensive Pair-Hidden Markov Model Forward (Pair-HMM Forward) algorithm as a case study, we assess the performance and viability of this new framework.
 
-Starting from \textbf{Chou, Yu-Chen’s (2024)} open-source C++/CUDA implementation, we first develop a WebGPU Baseline. We then tackle its primary bottlenecks—frequent CPU$\leftrightarrow$GPU round-trips, costly BindGroup reconstruction, and high global-memory latency—by successively introducing (i) single-CommandBuffer batch submission, (ii) Dynamic Uniform Offsets, and (iii) a Workgroup Cache, yielding \textbf{WebGPU-Optimized}. Across an NVIDIA RTX 2070 Super, Apple M1, and Intel UHD 620, and for sequence lengths from $10^2$ to $10^5$, the optimized version delivers \textbf{substantial speed-ups (over 100$\times$ in the best case)} and attains \textbf{more than 80 \% of CUDA’s throughput}. The relative Log-Likelihood error remains below $10^{-5}$ on all devices, and in the absence of an NVIDIA GPU our method still accelerates single-threaded C++ by one to two orders of magnitude.
+Starting from Chou, Yu-Chen’s (2024) open-source C++/CUDA implementation, we first develop a WebGPU baseline version. We then tackle its primary bottlenecks—frequent CPU$\leftrightarrow$GPU round-trips, costly BindGroup reconstruction, and high global-memory latency—by successively introducing: (i) single-CommandBuffer batch submission, (ii) Dynamic Uniform Offsets, and (iii) a Workgroup Cache. This leads to an optimized implementation referred to as WebGPU-Optimized. 
 
-These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Forward within seconds in a browser. We contribute three browser-specific optimization strategies and detailed cross-hardware measurements, laying the groundwork for Web-native genomic analysis tools and promoting the democratization and real-time execution of bioinformatics workloads.}
+Across an NVIDIA RTX 2070 Super, Apple M1, and Intel UHD 620, and for sequence lengths from $10^2$ to $10^5$, the optimized version achieves notable speed-ups (exceeding 100$\times$ in the best case) and attains over 80\% of CUDA’s throughput. The relative Log-Likelihood error remains below $10^{-5}$ on all devices. Even without access to an NVIDIA GPU, our method still outperforms single-threaded C++ by one to two orders of magnitude.
+
+These results demonstrate that pure JavaScript and WGSL can compute Pair-HMM Forward within seconds in a browser. We contribute three browser-specific optimization strategies and detailed cross-hardware measurements, laying the groundwork for Web-native genomic analysis tools and supporting the democratization and real-time execution of bioinformatics workloads.
+}
+
 
 
 \newcommand*\Keywords中文{瀏覽器 GPU 計算、Pair-Hidden Markov Model (Pair-HMM)、生物資訊加速}
@@ -101,37 +105,35 @@ These results demonstrate that pure JavaScript plus WGSL can compute Pair-HMM Fo
 \setcounter{page}{1}
 \pagenumbering{arabic}
 
-
-
 \chapter{Introduction}
 \section{Background}
 High-throughput sequencing (Next-Generation Sequencing, NGS) has pushed the scale and complexity of genomic data to grow exponentially, creating unprecedented demands on computational performance in bioinformatics. The \textbf{Pair Hidden Markov Model (Pair-HMM) Forward algorithm}, which simultaneously supports sequence alignment, genotype calling, and variant detection, is a core computation in many genomic pipelines.
 
 Current analysis workflows—such as GATK, Samtools, and BWA-MEM2—are mostly written in C++ or Python and gain GPU acceleration through NVIDIA CUDA or OpenCL. Besides installing drivers, SDKs, and dependencies, users are tied to specific GPU architectures. In classrooms or resource-constrained labs, the lack of high-end GPUs or sufficient cloud quotas often forces a CPU fallback, dramatically inflating cost and turnaround time. Cloud services reduce local setup complexity but introduce account management, network latency, and concerns over sensitive-data exposure.
 
-Since WebGPU landed in Chrome’s stable channel in May 2024, Firefox Nightly and Edge Dev have followed with experimental support. By mapping Vulkan, Direct3D 12, and Metal to a single JavaScript API inside the browser sandbox, WebGPU enables real-time parallel computation on NVIDIA, AMD, Intel, and Apple Silicon GPUs \textbf{without driver installation}. It therefore offers a new opportunity to lower the barrier to bioinformatics tools, especially in teaching, clinical front-ends, and low-resource settings.
+Since WebGPU landed in Chrome’s stable channel in May 2024, Firefox Nightly and Edge Dev have followed with experimental support. By mapping Vulkan, Direct3D 12, and Metal to a single JavaScript API inside the browser sandbox, WebGPU enables real-time parallel computation on NVIDIA, AMD, Intel, and Apple Silicon GPUs without requiring any driver installation. It therefore offers a new opportunity to lower the barrier to bioinformatics tools, especially in teaching, clinical front-ends, and low-resource settings.
 
 \section{Motivation and Objectives}
 Although WebGPU promises zero installation, cross-hardware portability, and on-device data residency, it was designed chiefly for graphics and ML inference. A compute-intensive dynamic-programming algorithm such as Pair-HMM Forward encounters several challenges:
 \begin{itemize}
-    \item \textbf{API scheduling overhead} – Wavefronts must be processed sequentially; if each dispatch creates fresh CommandBuffers and BindGroups, CPU$\leftrightarrow$GPU round-trips accumulate rapidly.
-    \item \textbf{Lack of global synchronization} – Every wavefront depends on the previous one; WebGPU exposes only workgroup-level barriers and lacks CUDA-style kernel-return global sync.
-    \item \textbf{No dedicated special-function units (SFUs)} – Pair-HMM issues many \texttt{log}/\texttt{exp} calls. CUDA’s SFUs finish \texttt{log₂} in four cycles, whereas WebGPU must approximate via ALU + LUT + FMA, adding a 2–4$\times$ latency penalty.
-    \item \textbf{High memory-access demand} – The DP matrix resides in a read-write storage buffer; WebGPU’s default path bypasses L1, so frequent global reads and writes incur heavy DRAM traffic.
+    \item \emph{API scheduling overhead} – Wavefronts must be processed sequentially; if each dispatch creates fresh CommandBuffers and BindGroups, CPU$\leftrightarrow$GPU round-trips accumulate rapidly.
+    \item \emph{Lack of global synchronization} – Every wavefront depends on the previous one; WebGPU exposes only workgroup-level barriers and lacks CUDA-style kernel-return global sync.
+    \item \emph{No dedicated special-function units (SFUs)} – Pair-HMM issues many \texttt{log}/\texttt{exp} calls. CUDA’s SFUs finish \texttt{log₂} in four cycles, whereas WebGPU must approximate via ALU + LUT + FMA, adding a 2–4$\times$ latency penalty.
+    \item \emph{High memory-access demand} – The DP matrix resides in a read-write storage buffer; WebGPU’s default path bypasses L1, so frequent global reads and writes incur heavy DRAM traffic.
 \end{itemize}
-These factors magnify WebGPU’s still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: \textbf{Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?}
+These factors magnify WebGPU’s still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?
 
 \section{Methods and Key Results}
-Using \textbf{Chou, Yu-Chen's (2024)} open-source C++/CUDA program as the reference, we introduce three WebGPU-specific optimizations to address the above bottlenecks:
+Using Chou, Yu-Chen's (2024) open-source C++/CUDA program as the reference, we introduce three WebGPU-specific optimizations to address the above bottlenecks:
 \begin{enumerate}
-    \item \textbf{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
-    \item \textbf{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
-    \item \textbf{Workgroup Cache} – Explicitly copy emission and transition constants into \texttt{var<workgroup>} to reduce repeated global-memory reads across wavefronts.
+    \item \emph{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
+    \item \emph{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
+    \item \emph{Workgroup Cache} – Explicitly copy emission and transition constants into \texttt{var<workgroup>} to reduce repeated global-memory reads across wavefronts.
 \end{enumerate}
-On an NVIDIA RTX 2070 Super with sequence lengths 100–100,000, \textbf{WebGPU-Optimized} accelerates the Baseline by 6.8–142$\times$ and reaches 11–84\% of CUDA’s throughput. On Apple M1 and Intel UHD 620, it delivers 4–463$\times$ speed-ups over CPU execution for sequences $\geq 1,000$, while keeping \textbf{Log-Likelihood errors below $10^{-5}$}.
+On an NVIDIA RTX 2070 Super with sequence lengths 100–100,000, "WebGPU-Optimized" accelerates the Baseline by 6.8–142$\times$ and reaches 11–84\% of CUDA’s throughput. On Apple M1 and Intel UHD 620, it delivers 4–463$\times$ speed-ups over CPU execution for sequences $\geq 1,000$, while maintaining Log-Likelihood errors below $10^{-5}$.
 
 \section{Conclusions and Contributions}
-This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The three complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for \textbf{``open-the-browser-and-compute'' genomic analysis}, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
+This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The three complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for "open-the-browser-and-compute" genomic analysis, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
 
 
 \chapter{Related Work}
