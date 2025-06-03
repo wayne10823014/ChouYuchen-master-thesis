@@ -128,7 +128,7 @@ Although WebGPU promises zero installation, cross-hardware portability, and on-d
 These factors magnify WebGPU's still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: \emph{Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?}
 
 \section{Methods and Key Results}
-Using Chou, Yu-Chen's (2024) open-source C++/CUDA program as the reference (Chou, 2024), we introduce three WebGPU-specific optimizations to address the above bottlenecks:
+Using Chou, Yu-Chen's (2024) open-source C++/CUDA program as the reference (Chou, 2024), we introduce two WebGPU-specific optimizations to address the above bottlenecks:
 \begin{enumerate}
     \item \emph{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
     \item \emph{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
@@ -136,7 +136,7 @@ Using Chou, Yu-Chen's (2024) open-source C++/CUDA program as the reference (Chou
 On an NVIDIA RTX 2070 Super with sequence lengths 100–100 000, “WebGPU-Optimized” accelerates the Baseline by 6.8–142$\times$ and reaches 11–84 \% of CUDA's throughput. On Apple M1 and Intel UHD 620, it delivers 4–463$\times$ speed-ups over CPU execution for sequences \(\ge 1{,}000\), while maintaining log-likelihood errors below \(10^{-5}\).
 
 \section{Conclusions and Contributions}
-This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The three complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for “open-the-browser-and-compute” genomic analysis, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
+This study shows that JavaScript plus WGSL can solve medium-to-large Pair-HMM Forward instances within seconds in a browser sandbox. The two complementary browser-side optimizations effectively mitigate API, synchronization, and memory bottlenecks, and cross-vendor tests on NVIDIA, Apple, and Intel GPUs confirm hardware agnosticism. Our results pave the way for “open-the-browser-and-compute” genomic analysis, and they provide an empirical foundation for future work on double-precision support and WASM-SIMD + WebGPU hybrid acceleration.
 
 
 \chapter{Related Work}
