@@ -86,22 +86,31 @@ These results demonstrate that pure JavaScript and WGSL can compute Pair-HMM For
   \ifstrequal{#1}{Z}{Gene/Protein Names}%
   }]}
 
-\nomenclature[A]{NGS}{Next-Generation Sequencing}
-\nomenclature[A]{DP}{Dynamic Programming}
-\nomenclature[A]{$LL$}{Log-Likelihood}
-\nomenclature[B]{Pair-HMM}{Pair-Hidden Markov Model}
-\nomenclature[B]{Wavefront}{Anti-Diagonal Processing Order}
-\nomenclature[B]{$M_{i,j}$}{Match state DP value at $(i,j)$}
-\nomenclature[B]{$I_{i,j}$}{Insert state DP value at $(i,j)$}
-\nomenclature[B]{$D_{i,j}$}{Delete state DP value at $(i,j)$}
-\nomenclature[B]{$N$}{Read length}
-\nomenclature[B]{$M$}{Reference length}
-\nomenclature[C]{WebGPU}{Web Graphics Processing Unit API}
-\nomenclature[C]{WGSL}{WebGPU Shading Language}
-\nomenclature[C]{BindGroup}{Resource binding group in WebGPU}
-\nomenclature[C]{Dynamic Uniform Offset}{Per-dispatch uniform buffering offset}
-\nomenclature[C]{SFU}{Special Function Unit}
-\nomenclature[C]{RTX 2070 S}{NVIDIA RTX 2070 Super GPU}
+% === A. General ===
+\nomenclature[A]{HPC}{High-Performance Computing}
+\nomenclature[A]{API}{Application Programming Interface}
+\nomenclature[A]{BWA}{Burrows–Wheeler Aligner}
+\nomenclature[A]{GATK}{Genome Analysis Toolkit}
+
+% === B. Algorithm / Computational Model ===
+\nomenclature[B]{HMM}{Hidden Markov Model}
+\nomenclature[B]{SIMD}{Single Instruction Multiple Data}
+\nomenclature[B]{FMA}{Fused Multiply-Add instruction}
+\nomenclature[B]{SM}{Streaming Multiprocessor (CUDA core block)}
+\nomenclature[B]{LUT}{Lookup Table}
+
+% === C. GPU / WebGPU & Related Technologies ===
+\nomenclature[C]{CUDA}{Compute Unified Device Architecture}
+\nomenclature[C]{OpenCL}{Open Computing Language}
+\nomenclature[C]{WASM}{WebAssembly}
+\nomenclature[C]{WASM-SIMD}{SIMD extension of WebAssembly}
+\nomenclature[C]{WGPU}{Cross-platform WebGPU API implementation}
+\nomenclature[C]{ALU}{Arithmetic Logic Unit}
+\nomenclature[C]{UMA}{Unified Memory Architecture}
+\nomenclature[C]{DRAM}{Dynamic Random-Access Memory}
+\nomenclature[C]{TFLOPS}{Tera Floating-Point Operations per Second}
+\nomenclature[C]{SDK}{Software Development Kit}
+
 
 \printnomenclature[5cm]
 
