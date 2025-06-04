@@ -128,7 +128,8 @@ Although WebGPU promises zero installation, cross-hardware portability, and on-d
 These factors magnify WebGPU's still-maturing API and hardware limits, and no systematic study yet verifies its suitability for high-intensity bioinformatics workloads. We therefore ask: \emph{Can WebGPU inside a browser execute Pair-HMM Forward with sufficient performance to serve as a practical alternative to CUDA?}
 
 \section{Methods and Key Results}
-Using Chou, Yu-Chen's (2024) open-source C++/CUDA program as the reference (Chou, 2024), we introduce two WebGPU-specific optimizations to address the above bottlenecks:
+Using the open-source C++/CUDA reference implementation released by Yu-Chen~Chou \cite{chou2024} as our baseline, we introduce two WebGPU-specific optimizations to address the aforementioned bottlenecks:
+
 \begin{enumerate}
     \item \emph{Single-CommandBuffer batch submission} – Aggregate multiple wavefronts into one \texttt{queue.submit()}, eliminating extensive API round-trip latency.
     \item \emph{Dynamic Uniform Offsets} – Store static parameters in a single uniform buffer and access them via dynamic offsets, removing the need to allocate and bind multiple UBOs.
@@ -208,67 +209,106 @@ By porting Chou, Yu-Chen's (2024) CUDA implementation to WebGPU, this study prop
 
 \chapter{Methods}
 
-\section{Mathematical Model}
-This study adopts a Pair-HMM combined with a sequence profile, following the formulation in Durbin \emph{et al}. (1998, chap.~4).
+\section{Synthetic Dataset Generation}\label{sec:dataset}
+To evaluate the performance of the proposed GPU-accelerated Pair-HMM, we
+dynamically generate four synthetic test datasets of 100, 1 000, 10 000,
+and 100 000 bp immediately before each run.
+For every length, the host CPU first constructs a
+$\textit{len}\!\times\!4$ read-probability matrix whose nucleotide
+probabilities (A, C, G, T) are all 0.25.
+It then creates a haplotype sequence of identical length consisting
+entirely of the nucleotide “A.”
+Both the read profile and the haplotype are copied to the GPU, where the
+forward algorithm is executed.
+This design eliminates input-data randomness, enabling a focused
+comparison of how different parallelisation strategies scale in
+computational and memory efficiency as sequence length increases.
 
-The hidden states are Match (M), Insert (I), and Delete (D), over the alphabet $\{A,C,G,T,-\}$ (Durbin \emph{et al}., 1998).
+\paragraph{Provenance of the generator}%
+The entire dataset-generation procedure—including the random
+read-probability generator, transition matrix, and emission constants—was
+ported \emph{verbatim} from the open-source C++/CUDA reference
+implementation released by Yu-Chen~Chou\cite{chou2024}.
+None of the dataset-generation code was written as part of this study; we
+adopted the original implementation without modification.
+Reusing the same logic ensures that both our WebGPU kernels and the CUDA
+baseline process identical input data, enabling a fair and consistent
+comparison.
+
+
+\section{Mathematical Model}
+This study adopts a Pair-HMM combined with a sequence profile, following
+the formulation in [2].
+
+Hidden states are Match (M), Insert (I), and Delete (D) over the alphabet
+$\{A,C,G,T,-\}$.
 
 The read sequence is represented by a probability matrix
 \[
-P = [p_{i,a}], \quad 1 \leq i \leq m, \quad a \in \{A,C,G,T\}, \quad \sum_a p_{i,a} = 1,
+P = [p_{i,a}], \quad 1 \le i \le m,\;
+a \in \{A,C,G,T\},\;
+\sum_a p_{i,a} = 1,
 \]
-which gives the probability that position $i$ of the read is character $a$ (Banerjee \emph{et al}., 2017).
+giving the probability that position $i$ of the read is character $a$
+[3].
 
-The haplotype sequence is a fixed string $h_1, \dots, h_n$.
+The haplotype sequence is a fixed string $h_1,\dots,h_n$.
 
 The transition probabilities
 \[
 t_{XY}, \quad X,Y \in \{M,I,D\},
 \]
-and the base-emission matrix $\varepsilon_X(x,y)$ follow the configuration used in the C++/CUDA implementation published by Chou, Yu-Chen (2024).
+and the base-emission matrix $\varepsilon_X(x,y)$ use the same settings
+as the reference implementation [1].
 
 \subsection{Profile emission probabilities}
 \[
-e_{i,j}^M = \sum_a p_{i,a} \varepsilon_M(a, h_j), \quad 
-e_{i,j}^I = \sum_a p_{i,a} \varepsilon_I(a, -),
+e_{i,j}^{M} = \sum_a p_{i,a}\,\varepsilon_M(a,h_j), \quad
+e_{i,j}^{I} = \sum_a p_{i,a}\,\varepsilon_I(a,-),
 \]
-while the Delete state always emits a gap, so its emission probability is fixed at 1 (Durbin \emph{et al}., 1998).
+while the Delete state always emits a gap, so its emission probability is
+fixed at 1 [2].
 
 \section{Pair-HMM Forward Algorithm}
-The Pair-HMM Forward recursion must advance along the anti-diagonals (wavefronts) of the dynamic-programming (DP) matrix—as illustrated in Figure~\ref{fig:pairhmm-wavefront}. Each wavefront can proceed only after the previous one has completed; without device-side global synchronisation, this dependency becomes a performance bottleneck on the GPU (Banerjee \emph{et al}., 2017).
+The forward recursion advances along anti-diagonals (wavefronts) of the
+dynamic-programming matrix, as illustrated in
+Figure~\ref{fig:pairhmm-wavefront}.
+Each wavefront can proceed only after the previous one completes;
+without device-side global synchronisation, this dependency becomes a
+performance bottleneck on the GPU [3].
 
 \begin{enumerate}
-    \item \textit{Initialisation}
-    \[
-    M_{0,0} = 1, \quad I_{0,0} = D_{0,0} = 0, \quad 
-    M_{0,j} = I_{0,j} = 0, \quad D_{0,j} = \frac{1}{n} \quad (j > 0).
-    \]
-    \item \textit{Recursion} (Durbin \emph{et al}., 1998)
-    \[
-    M_{i,j} = e_{i,j}^M (t_{MM} M_{i-1,j-1} + t_{IM} I_{i-1,j-1} + t_{DM} D_{i-1,j-1}),
-    \]
-    \[
-    I_{i,j} = e_{i,j}^I (t_{MI} M_{i-1,j} + t_{II} I_{i-1,j}),
-    \]
-    \[
-    D_{i,j} = t_{MD} M_{i,j-1} + t_{DD} D_{i,j-1}.
-    \]
-    \item \textit{Termination}
-    \[
-    P = \sum_{j=1}^n (M_{m,j} + I_{m,j}).
-    \]
-    \item \textit{Time complexity} is $\mathcal{O}(mn)$.
+  \item \textit{Initialisation}
+  \[
+    M_{0,0} = 1,\quad I_{0,0} = D_{0,0} = 0,\quad
+    M_{0,j} = I_{0,j} = 0,\quad D_{0,j} = \frac{1}{n}\quad(j>0).
+  \]
+  \item \textit{Recursion} [2]
+  \[
+    M_{i,j} = e_{i,j}^{M}\bigl(t_{MM}M_{i-1,j-1} + t_{IM}I_{i-1,j-1}
+               + t_{DM}D_{i-1,j-1}\bigr),
+  \]
+  \[
+    I_{i,j} = e_{i,j}^{I}\bigl(t_{MI}M_{i-1,j} + t_{II}I_{i-1,j}\bigr),
+  \]
+  \[
+    D_{i,j} = t_{MD}M_{i,j-1} + t_{DD}D_{i,j-1}.
+  \]
+  \item \textit{Termination}
+  \[
+    P = \sum_{j=1}^{n}\bigl(M_{m,j} + I_{m,j}\bigr).
+  \]
+  \item \textit{Time complexity} is $\mathcal{O}(mn)$.
 \end{enumerate}
 
 \begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.9\linewidth]{Pair-HMM Forward 的計算沿反對角線 .png}
-    \caption{Illustration of wavefront computation in the Pair-HMM Forward algorithm}
-    \label{fig:pairhmm-wavefront}
+  \centering
+  \includegraphics[width=0.9\linewidth]
+    {Pair-HMM Forward 的計算沿反對角線 .png}
+  \caption{Wavefront computation in the Pair-HMM Forward algorithm}
+  \label{fig:pairhmm-wavefront}
 \end{figure}
 
-Left: recursion dependencies of the three hidden states M/I/D.  
-Right: yellow arrows indicate batched progression along anti-diagonals; red, green, and blue squares represent the current wavefront's M, I, and D states, respectively (Schmidt \emph{et al}., 2024).
 
 \section{System Design and Implementation}
 
