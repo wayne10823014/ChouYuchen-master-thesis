@@ -644,6 +644,8 @@ On Apple M1 and Intel UHD 620, the same WGSL shader still achieves 4–463$\time
 Across all platforms, relative Log-Likelihood errors remain below $4 \times 10^{-4}$, ensuring both high performance and numerical correctness.
 
 
+
+
 \chapter{Discussion}
 \section{Performance Differences and Bottlenecks}
 The experiments reveal that—even on the RTX 2070 Super—our WebGPU-Optimized version still lags CUDA by 12\%–88\%. On the Apple M1 and Intel UHD 620, the optimized shader achieves dozens- to hundreds-fold speed-ups over single-threaded CPU code, yet its absolute runtime remains higher than CUDA's. Hence, the bottlenecks lie not in the algorithmic flow but in the interaction between micro-architecture and API design. We therefore analyse three root causes: the absence of special-function units (SFUs), differences in cache paths, and resource-binding overhead.
@@ -795,10 +797,6 @@ The three directions outlined—applying mixed precision techniques for double p
 
 
 
-
-
-
-
 \chapter{Conclusion}
 
 This work presents the first complete browser-side implementation of the Pair-HMM Forward algorithm using WebGPU, filling a gap left by earlier CUDA-centric studies (Banerjee \emph{et al}., 2017; Schmidt \emph{et al}., 2024). We systematically evaluate four implementations—C++, CUDA, WebGPU-Baseline, and WebGPU-Optimized—across three heterogeneous GPUs (RTX 2070 Super, Apple M1, and Intel UHD 620), analysing both performance and numerical correctness.
@@ -823,15 +821,15 @@ WebGPU is not merely a replacement for installing CUDA SDKs or provisioning clou
 In summary, the model demonstrated—driver-free, cross-hardware, and fully on-device—illustrates a concrete path for browser-native scientific GPU computing. As browser APIs and GPU hardware evolve, we anticipate many genomics applications will become fully web-executable within the next three to five years, further democratising high-performance bioinformatics and accelerating digital transformation in the biomedical domain.
 
 
-
-
 \chapter{References}
 \begin{enumerate}
   \item Liu, Y., Schrinner, S., \& others. (2021). \emph{GPU Acceleration in Genomics: A Comprehensive Survey}. \textit{Briefings in Bioinformatics}, 22(5), bbab042. \url{https://doi.org/10.1093/bib/bbab042}
 
   \item W3C. (2024). \emph{WebGPU Specification}. W3C Recommendation. \url{https://www.w3.org/TR/webgpu/}
 
-  \item Chou, Y.-C.\ (2024). \emph{Pair-HMM Forward: Reference \& GPU-Accelerated Implementations}. GitHub repository. \url{https://github.com/yuchen0620/ChouYuchen-master-thesis}
+    \item Chou, Y.-C.\ (2024). \emph{Pair-HMM Forward: Reference \& GPU-Accelerated Implementations – A GPU-Based Approach to Accelerate the Pair Hidden Markov Model Forward Algorithm for DNA Sequence Profile Alignment} [GitHub repository]. \url{https://github.com/yuchen0620/ChouYuchen-master-thesis}
+
+
 
   \item Durbin, R., Eddy, S. R., Krogh, A., \& Mitchison, G. (1998). \emph{Biological Sequence Analysis: Probabilistic Models of Proteins and Nucleic Acids}. Cambridge University Press.
 
