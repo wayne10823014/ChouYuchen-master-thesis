@@ -648,14 +648,17 @@ Across all platforms, relative Log-Likelihood errors remain below $4 \times 10^{
 
 \chapter{Discussion}
 \section{Performance Differences and Bottlenecks}
-The experiments reveal that—even on the RTX 2070 Super—our WebGPU-Optimized version still lags CUDA by 12\%–88\%. On the Apple M1 and Intel UHD 620, the optimized shader achieves dozens- to hundreds-fold speed-ups over single-threaded CPU code, yet its absolute runtime remains higher than CUDA's. Hence, the bottlenecks lie not in the algorithmic flow but in the interaction between micro-architecture and API design. We therefore analyse three root causes: the absence of special-function units (SFUs), differences in cache paths, and resource-binding overhead.
+The experiments reveal that—even on the RTX 2070 Super—our WebGPU-Optimized version still lags CUDA by 12\%–88\%. On the Apple M1 and Intel UHD 620, the optimized shader achieves dozens- to hundreds-fold speed-ups over single-threaded CPU code, yet its absolute runtime remains higher than CUDA's. Hence, the bottlenecks lie not in the algorithmic flow but in the interaction between micro-architecture and API design. We therefore analyse two root causes: the absence of special-function units (SFUs) and resource-binding overhead.
 
 \subsection{Impact of Missing SFUs on \texttt{log}/\texttt{exp} Throughput}
 As shown in Figure~\ref{fig:log_exp_pipeline}, every streaming multiprocessor (SM) in post-Volta CUDA GPUs contains 32 special-function units (SFUs) that complete an entire warp's \texttt{log}/\texttt{exp} operations in four cycles.
 
 To guarantee consistent semantics across NVIDIA, AMD, Intel, and Apple devices, WebGPU must decompose each \texttt{log}/\texttt{exp} into mantissa/exponent extraction, LUT approximation, and two fused-multiply-add (FMA) steps for sixth-order polynomial correction—resulting in 11–12 cycles per call.
 
+
 \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\linewidth]{CUDA vs WebGPU log-exp 管線圖.png}
     \caption{Latency comparison between CUDA SFU and WebGPU software \texttt{log}/\texttt{exp} pipeline}
     \label{fig:log_exp_pipeline}
 \end{figure}
@@ -665,12 +668,6 @@ mantissa split (1 ALU cycle) $\rightarrow$ LUT interpolation (4 cycles) $\righta
 
 Each DP cell in Pair-HMM invokes around 30 \texttt{log}/\texttt{exp} calls. At $N=10^5$, this amounts to $3 \times 10^{11}$ total calls. Based on theoretical throughput, CUDA takes about 0.59 s, while WebGPU requires at least 1.01 s—a baseline gap of 0.42 s. When factoring in wavefront dependency and 65\% thread utilisation, the effective difference ranges from 0.25–0.30 s, or roughly 45–55\% of the total gap. Given that complexity scales with $N^2$, this latency becomes a dominant contributor at large $N$.
 
-\subsection{Cache-Policy Gap: 32 KB L1 Hits vs. Storage-Path Bypass}
-CUDA can issue \texttt{ld.global.ca/cg} to cache read-only data in the 32 KB L1 cache or 64 KB sector cache. On TU104, a single L1 hit costs approximately 20 ns. The DP rows in Pair-HMM are memory-contiguous and thus cache-friendly.
-
-In contrast, Dawn maps WGSL's \texttt{var<storage>} to \texttt{ld.global.cg} and \texttt{st.global.cg}, bypassing L1 to preserve cross-workgroup visibility. Even after relocating the 336 B transition and emission tables into \texttt{var<workgroup>}, DP rows are still read from DRAM.
-
-Consequently, the same 15 global reads take about 0.30 μs on CUDA but 1.2–1.5 μs on WebGPU—a significant latency tier difference.
 
 \subsection{API Overhead: Pointer Rotation vs. BindGroup Reconstruction}
 In CUDA, the host simply rotates three pointers to swap \texttt{prev}, \texttt{curr}, and \texttt{new} with no allocation or validation overhead.
