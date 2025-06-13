@@ -683,6 +683,21 @@ At $N = 100$, SFU absence is masked by cache hits. At $N = 100,000$, it imposes 
 
 These results confirm that architectural and API differences—more so than algorithmic inefficiencies—are the principal reasons WebGPU cannot yet match CUDA's raw performance.
 
+
+
+\subsection{Lessons from \textit{gpuPairHMM}}
+Recent work by Schmidt \emph{et~al.} on \textit{gpuPairHMM} demonstrates that a wavefront-based, register-resident kernel combined with warp-shuffle intrinsics can deliver up to 2.6~TCUPS on an Ada~L40S, outperforming prior GPU, CPU, and FPGA solutions by over an order of magnitude \cite{Schmidt2024gpuPairHMM}. Three design decisions are particularly instructive for WebGPU:
+
+\begin{itemize}
+  \item \textbf{Sub-warp diagonal tiling \& warp shuffle.} Each sub-warp owns a diagonal tile and exchanges boundary values through \texttt{\_\_shfl\_sync}. While WGSL currently lacks explicit shuffle intrinsics, the same register-tile principle can be emulated with workgroup memory and \texttt{workgroupBarrier()} once subgroup operations are standardised.
+  \item \textbf{Emission memoisation \& length-aware kernels.} \textit{gpuPairHMM} caches only five distinct emission probabilities and specialises kernels by (readLen,~hapLen) buckets, drastically reducing divergence and register pressure. WebGPU can mirror this by maintaining multiple pre-compiled pipelines and indexing a compact \texttt{storage} buffer that stores the five emission scores.
+  \item \textbf{Host–device overlap.} The authors hide PCIe latency via multiple CUDA streams; although browsers cannot issue true DMA, the same pattern can be approximated with double-buffered \texttt{queue.writeBuffer()} / \texttt{queue.submit()} pairs. This overlap is critical for sustaining throughput once our implementation moves beyond integrated GPUs to discrete adapters.
+\end{itemize}
+
+Adopting these tactics is expected to improve the performance of our WebGPU implementation without altering the underlying Pair-HMM algorithm.
+
+
+
 \section{Cross-Hardware Performance}
 \subsection{Apple M1: Pros and Cons of a Unified-Memory Architecture (UMA)}
 The Apple M1's UMA design shares 8 GB of LPDDR4X between CPU and GPU, eliminating the need for discrete memory transfers. For moderate values of $N$, \texttt{copyBufferToBuffer()} is reduced to pointer offset adjustment rather than true DMA, resulting in lower WebGPU start-up latency than on discrete GPUs.
