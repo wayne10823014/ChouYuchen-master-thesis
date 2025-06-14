@@ -664,9 +664,10 @@ To guarantee consistent semantics across NVIDIA, AMD, Intel, and Apple devices, 
 \end{figure}
 
 CUDA completes these in four hardware cycles, while WebGPU requires:
-mantissa split (1 ALU cycle) $\rightarrow$ LUT interpolation (4 cycles) $\rightarrow$ FMA correction (4 cycles) $\rightarrow$ logarithm scaling and write-back (2–3 cycles). At 1.7 GHz, this translates to a theoretical peak of 320 vs.\ 170 ops per cycle, respectively.
+mantissa split (1 ALU cycle) $\rightarrow$ LUT interpolation (4 cycles) $\rightarrow$ FMA correction (4 cycles) $\rightarrow$ logarithm scaling and write-back (2–3 cycles). Even at a conservative 1.7 GHz shader clock, the aggregate instruction throughput of CUDA therefore remains nearly double that of WebGPU.
 
-Each DP cell in Pair-HMM invokes around 30 \texttt{log}/\texttt{exp} calls. At $N=10^5$, this amounts to $3 \times 10^{11}$ total calls. Based on theoretical throughput, CUDA takes about 0.59 s, while WebGPU requires at least 1.01 s—a baseline gap of 0.42 s. When factoring in wavefront dependency and 65\% thread utilisation, the effective difference ranges from 0.25–0.30 s, or roughly 45–55\% of the total gap. Given that complexity scales with $N^2$, this latency becomes a dominant contributor at large $N$.
+Each DP cell in Pair-HMM invokes around 30 \texttt{log}/\texttt{exp} calls. At $N=10^{5}$ this balloons to more than $10^{11}$ transcendental evaluations. A back-of-the-envelope projection thus indicates that CUDA should complete the DP pass in well under a second, whereas WebGPU still requires roughly twice as long—even before accounting for wavefront dependencies and sub-optimal occupancy. Given that complexity scales with $N^{2}$, such per-instruction latency gaps quickly dominate overall runtime at large~$N$.
+
 
 
 \subsection{API Overhead: Pointer Rotation vs. BindGroup Reconstruction}
@@ -682,6 +683,65 @@ Because Pair-HMM's computational complexity scales with $N^2$, even minor latenc
 At $N = 100$, SFU absence is masked by cache hits. At $N = 100,000$, it imposes a floor of approximately 1.0 s in runtime. With additional latency from DRAM traffic and BindGroup overhead, WebGPU-Optimized completes in 3.3 s, versus 2.77 s for CUDA.
 
 These results confirm that architectural and API differences—more so than algorithmic inefficiencies—are the principal reasons WebGPU cannot yet match CUDA's raw performance.
+
+
+\subsection{Numerical Stability: Log-space \emph{versus} Scaling Coefficients}
+\textit{(Note: Scaling is not yet implemented in the current prototype; this
+section evaluates its feasibility and impact.)}
+Our current WebGPU kernel follows the conventional \emph{log-space} formulation
+to prevent numerical underflow in long read–haplotype pairs.
+While this approach is mathematically robust, each DP cell requires one
+\texttt{exp} and one \texttt{log}, thereby hitting WebGPU’s software-emulated
+SFU pipeline twice per state update (§\ref{fig:log_exp_pipeline}).
+
+\vspace{0.4em}
+\noindent\textbf{Scaling as an alternative.}\;
+Rather than switching the entire recurrence into log space, one can keep all
+computations in probability space and re-normalise after each column.  The
+workflow is simple: (i) sum the forward probabilities of the current time
+step; (ii) take the reciprocal of that sum as a scaling factor; and
+(iii) multiply every probability in the column by this factor so that their
+total becomes one.  With every subsequent update now operating on well-behaved
+values in \([0,1]\), the inner loop no longer requires any
+\texttt{log}/\texttt{exp} invocations.  Once the dynamic programme finishes,
+the saved scaling factors are converted back into the overall log-likelihood
+by taking their logarithms, adding them together, and applying a minus sign.
+This procedure retains numerical stability while sharply reducing SFU load
+and easing both register pressure and memory traffic.
+
+\paragraph{Potential benefits}
+\begin{itemize}
+  \item \emph{Reduced SFU traffic}––all inner-loop
+        operations collapse to \texttt{f32} multiply–add; transcendental calls
+        migrate to a one-off final reduction.
+  \item \emph{Lower register pressure}––no need to keep log-transformed values
+        alive across iterations.
+  \item \emph{Vector-friendly}––probabilities remain in \([0,1]\),
+        easing SIMD-style processing and shared-memory tiling.
+\end{itemize}
+
+\paragraph{Trade-offs \& implementation notes}
+\begin{enumerate}
+  \item Each column now demands a workgroup-level reduction to compute
+        \(c_{t}\). Although this can be done with barrier-synchronised tree
+        sums, it introduces extra global synchronisation not present in the
+        log-space variant.
+  \item All \(c_{t}\) (or \(\log c_{t}\)) must be stored for the final
+        likelihood recovery, adding an \(O(T)\) buffer that grows with the
+        read length.
+  \item Scaling is numerically safe only when the summation is well
+        conditioned; extreme skew in emission probabilities may still
+        necessitate occasional re-normalisation safeguards.
+\end{enumerate}
+
+\paragraph{Outlook}
+Given the sizeable share of SFU latency in our current profile, adopting the
+scaling scheme could shift the hot-spot entirely to ALU pipelines and
+potentially harmonise better with future subgroup shuffle intrinsics.
+However, a full conversion would require revisiting our bind-group layout and
+workgroup granularity to hide the added reduction cost.
+Quantitative evaluation is left for future work once subgroup support and
+more precise shader timers become available.
 
 
 
