@@ -152,7 +152,7 @@ Our objectives are:
 \end{enumerate}
 
 \section{Methods and Key Results}
-Using the open-source C++/CUDA reference by Yu-Chen Chou \cite{chou2024} as baseline, we introduce two WebGPU-specific optimizations:
+Using the open-source C++/CUDA reference by Yu-Chen Chou [3] as baseline, we introduce two WebGPU-specific optimizations:
 
 \begin{enumerate}
   \item \textit{Single-command-buffer batch submission} – Aggregate multiple wavefronts into one \verb|queue.submit()|, eliminating excessive API latency.
@@ -268,7 +268,7 @@ efficiency as sequence length increases.
 The entire dataset-generation procedure—including the pseudo-random
 probability initialiser, transition matrix, and emission constants—is
 ported \emph{verbatim} from the open-source C++/CUDA reference
-implementation released by Yu-Chen~Chou\cite{chou2024}.
+implementation released by Yu-Chen~Chou [3].
 No additional code was written for dataset preparation, ensuring that our
 WebGPU kernels and the CUDA baseline process identical inputs and are thus
 directly comparable.
