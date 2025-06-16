@@ -679,195 +679,169 @@ WebGPU, however, must recreate a \texttt{BindGroup} whenever a binding changes b
 Dynamic Uniform Offsets remove the need to rebind uniform data, yet the three mutable DP buffers still require $2N$ BindGroup creations. Resource-binding overhead therefore remains a key optimisation target for future WebGPU revisions that might allow in-place descriptor updates or bind-group recycling.
 
 
-
-
-\subsection{Quadratic Amplification and Energy Implications}
-Because Pair-HMM's computational complexity scales with $N^2$, even minor latencies are quadratically amplified.
-
-At $N = 100$, SFU absence is masked by cache hits. At $N = 100,000$, it imposes a floor of approximately 1.0 s in runtime. With additional latency from DRAM traffic and BindGroup overhead, WebGPU-Optimized completes in 3.3 s, versus 2.77 s for CUDA.
-
-These results confirm that architectural and API differences—more so than algorithmic inefficiencies—are the principal reasons WebGPU cannot yet match CUDA's raw performance.
-
-
 \subsection{Numerical Stability: Log-space \emph{versus} Scaling Coefficients}
-\textit{(Note: Scaling is not yet implemented in the current prototype; this
-section evaluates its feasibility and impact.)}
-Our current WebGPU kernel follows the conventional \emph{log-space} formulation
-to prevent numerical underflow in long read–haplotype pairs.
-While this approach is mathematically robust, each DP cell requires one
-\texttt{exp} and one \texttt{log}, thereby hitting WebGPU's software-emulated
-SFU pipeline twice per state update (§\ref{fig:log_exp_pipeline}).
+
+\textit{(Scaling has not yet been implemented in the current prototype; this section evaluates its feasibility.)}
+
+The present WebGPU kernel uses the conventional \emph{log-space} formulation to avoid underflow on long read–haplotype pairs.  
+While mathematically robust, each dynamic-programming (DP) cell requires one \texttt{exp} and one \texttt{log}, hitting WebGPU’s software-emulated SFU pipeline twice per update (Fig.~\ref{fig:log_exp_pipeline}).
 
 \vspace{0.4em}
 \noindent\textbf{Scaling as an alternative.}\;
-Rather than switching the entire recurrence into log space, one can keep all
-computations in probability space and re-normalise after each column.  The
-workflow is simple: (i) sum the forward probabilities of the current time
-step; (ii) take the reciprocal of that sum as a scaling factor; and
-(iii) multiply every probability in the column by this factor so that their
-total becomes one.  With every subsequent update now operating on well-behaved
-values in \([0,1]\), the inner loop no longer requires any
-\texttt{log}/\texttt{exp} invocations.  Once the dynamic programme finishes,
-the saved scaling factors are converted back into the overall log-likelihood
-by taking their logarithms, adding them together, and applying a minus sign.
-This procedure retains numerical stability while sharply reducing SFU load
-and easing both register pressure and memory traffic.
+Instead of converting the entire recurrence to log space, one can remain in probability space and renormalise after each column:
+
+
+With values now confined to $[0,1]$, the inner loop no longer calls \texttt{log}/\texttt{exp}.  
+After the DP completes, the stored $c_{t}$ values are converted back into the overall log-likelihood by summing their logarithms and applying a minus sign.  
+This keeps numerical stability while sharply reducing SFU traffic and easing register and memory pressure.
 
 \paragraph{Potential benefits}
 \begin{itemize}
-  \item \emph{Reduced SFU traffic}––all inner-loop
-        operations collapse to \texttt{f32} multiply–add; transcendental calls
-        migrate to a one-off final reduction.
-  \item \emph{Lower register pressure}––no need to keep log-transformed values
-        alive across iterations.
-  \item \emph{Vector-friendly}––probabilities remain in \([0,1]\),
-        easing SIMD-style processing and shared-memory tiling.
+  \item \emph{Reduced SFU usage}—all inner-loop work becomes plain \texttt{f32} multiply–adds; transcendental functions are invoked only once at the end.
+  \item \emph{Lower register pressure}—no need to keep log-transformed values alive across iterations.
+  \item \emph{Vector-friendly data}—probabilities remain in $[0,1]$, facilitating SIMD execution and shared-memory tiling.
 \end{itemize}
 
-\paragraph{Trade-offs \& implementation notes}
+\paragraph{Trade-offs and implementation notes}
 \begin{enumerate}
-  \item Each column now demands a workgroup-level reduction to compute
-        \(c_{t}\). Although this can be done with barrier-synchronised tree
-        sums, it introduces extra global synchronisation not present in the
-        log-space variant.
-  \item All \(c_{t}\) (or \(\log c_{t}\)) must be stored for the final
-        likelihood recovery, adding an \(O(T)\) buffer that grows with the
-        read length.
-  \item Scaling is numerically safe only when the summation is well
-        conditioned; extreme skew in emission probabilities may still
-        necessitate occasional re-normalisation safeguards.
+  \item Each column now requires a workgroup-level reduction to compute $c_{t}$.  
+        Although this can be implemented with barrier-synchronised tree sums, it introduces extra global synchronisation absent from the log-space variant.
+  \item All $c_{t}$ (or $\log c_{t}$) values must be stored for the final likelihood recovery, adding an $O(T)$ buffer that grows with read length.
+  \item Scaling is numerically safe only when the column sum is well conditioned; highly skewed emissions may still require occasional re-normalisation safeguards.
 \end{enumerate}
 
 \paragraph{Outlook}
-Given the sizeable share of SFU latency in our current profile, adopting the
-scaling scheme could shift the hot-spot entirely to ALU pipelines and
-potentially harmonise better with future subgroup shuffle intrinsics.
-However, a full conversion would require revisiting our bind-group layout and
-workgroup granularity to hide the added reduction cost.
-Quantitative evaluation is left for future work once subgroup support and
-more precise shader timers become available.
+Given the sizeable SFU share in the current profile, the scaling scheme could shift the hotspot entirely to ALU pipelines and fit well with future subgroup-shuffle intrinsics.  
+A full conversion, however, would require revisiting the bind-group layout and workgroup granularity to hide the extra reduction cost.  
+Quantitative evaluation is left for future work once subgroup support and finer-grained shader timers become available.
 
 
 
 \subsection{Lessons from \textit{gpuPairHMM}}
-Recent work by Schmidt \emph{et~al.} on \textit{gpuPairHMM} demonstrates that a wavefront-based, register-resident kernel combined with warp-shuffle intrinsics can deliver up to 2.6~TCUPS on an Ada~L40S, outperforming prior GPU, CPU, and FPGA solutions by over an order of magnitude \cite{Schmidt2024gpuPairHMM}. Three design decisions are particularly instructive for WebGPU:
+Recent work by Schmidt \emph{et~al}. on \textit{gpuPairHMM} shows that a wavefront-based, register-resident kernel combined with warp-shuffle intrinsics can reach up to $2.6$ TCUPS (trillions of cell updates per second) on an NVIDIA L40S, outperforming prior GPU, CPU, and FPGA implementations by more than an order of magnitude \cite{Schmidt2024gpuPairHMM}. Three design decisions are particularly instructive for WebGPU:
 
 \begin{itemize}
-  \item \textbf{Sub-warp diagonal tiling \& warp shuffle.} Each sub-warp owns a diagonal tile and exchanges boundary values through \texttt{\_\_shfl\_sync}. While WGSL currently lacks explicit shuffle intrinsics, the same register-tile principle can be emulated with workgroup memory and \texttt{workgroupBarrier()} once subgroup operations are standardised.
-  \item \textbf{Emission memoisation \& length-aware kernels.} \textit{gpuPairHMM} caches only five distinct emission probabilities and specialises kernels by (readLen,~hapLen) buckets, drastically reducing divergence and register pressure. WebGPU can mirror this by maintaining multiple pre-compiled pipelines and indexing a compact \texttt{storage} buffer that stores the five emission scores.
-  \item \textbf{Host–device overlap.} The authors hide PCIe latency via multiple CUDA streams; although browsers cannot issue true DMA, the same pattern can be approximated with double-buffered \texttt{queue.writeBuffer()} / \texttt{queue.submit()} pairs. This overlap is critical for sustaining throughput once our implementation moves beyond integrated GPUs to discrete adapters.
+  \item \textbf{Sub-warp diagonal tiling \& warp shuffle.}  
+        Each sub-warp owns a diagonal tile and exchanges boundary values through \texttt{\_\_shfl\_sync}.  
+        Although WGSL currently lacks explicit shuffle intrinsics, the same register-tile principle can be emulated with workgroup memory plus \texttt{workgroupBarrier()} once subgroup operations become standard.
+  \item \textbf{Emission memoisation \& length-aware kernels.}  
+        \textit{gpuPairHMM} caches only five distinct emission probabilities and specialises kernels by (readLen, hapLen) buckets, sharply reducing divergence and register pressure.  
+        WebGPU can mirror this behaviour by maintaining multiple pre-compiled pipelines and indexing a compact \texttt{storage} buffer that stores the five emission scores.
+  \item \textbf{Host–device overlap.}  
+        The authors hide PCIe latency with multiple CUDA streams.  
+        While browsers cannot issue true DMA, the pattern can be approximated by double-buffered \texttt{queue.writeBuffer()} / \texttt{queue.submit()} pairs.  
+        Such overlap will be critical for sustaining throughput once our implementation moves from integrated GPUs to discrete adapters.
 \end{itemize}
 
-Adopting these tactics is expected to improve the performance of our WebGPU implementation without altering the underlying Pair-HMM algorithm.
+Adopting these tactics should further improve WebGPU performance without altering the underlying Pair-HMM algorithm.
 
-
-
+%------------------------------------------------
 \section{Cross-Hardware Performance}
+
 \subsection{Apple M1: Pros and Cons of a Unified-Memory Architecture (UMA)}
-The Apple M1's UMA design shares 8 GB of LPDDR4X between CPU and GPU, eliminating the need for discrete memory transfers. For moderate values of $N$, \texttt{copyBufferToBuffer()} is reduced to pointer offset adjustment rather than true DMA, resulting in lower WebGPU start-up latency than on discrete GPUs.
+Apple’s M1 employs a UMA design that shares 8 GB of LPDDR4X between CPU and GPU, eliminating discrete memory transfers.  
+For moderate $N$ values, \texttt{copyBufferToBuffer()} degrades to a pointer-offset adjustment rather than true DMA, reducing WebGPU start-up latency relative to discrete GPUs.
 
-At large $N$, however, bandwidth contention between CPU and GPU becomes visible, and the M1 remains approximately 2.2$\times$ slower than the RTX 2070 Super.
-
-Nonetheless, WebGPU-Optimized achieves a 463$\times$ speed-up over CPU execution, confirming that Dynamic Uniform Offsets effectively hide latency even under unified memory.
+At large $N$, however, CPU–GPU bandwidth contention emerges, and the M1 remains about $2.2\times$ slower than the RTX 2070 Super.  
+Nevertheless, WebGPU-Optimized delivers a $463\times$ speed-up over single-threaded CPU execution, demonstrating that Dynamic Uniform Offsets effectively hide latency even under unified memory.
 
 \subsection{Intel UHD 620: Driver Maturity and Scheduling Strategy}
-The UHD 620 lacks hardware SFUs and contains only 24 execution units (EUs), which makes intensive \texttt{log}/\texttt{exp} workloads more costly. Chrome–Dawn–DX12 submission still serialises commands via a submit-fence pattern, causing idle CPU periods at small $N$.
+The UHD 620 lacks hardware SFUs and offers only 24 execution units, making \texttt{log}/\texttt{exp} workloads expensive.  
+The Chrome–Dawn–DX12 stack serialises command submission via a submit-fence pattern, leaving the CPU idle for small $N$.
 
-Its 768 KB L3 cache is easily thrashed when multiple storage buffers are interleaved, resulting in frequent L2 cache misses. Despite this, our optimisations deliver a 222$\times$ speed-up at $N = 100,000$.
+Its 768 KB L3 cache is easily thrashed when multiple storage buffers interleave, causing frequent L2 misses.  
+Despite these constraints, our optimisations still achieve a $222\times$ speed-up at $N = 100\,000$.
 
-These results confirm that the proposed WebGPU optimisations are vendor-agnostic and capable of improving performance even on low-end integrated GPUs, underscoring WebGPU's potential as a cross-platform acceleration framework.
+These results confirm that the proposed WebGPU optimisations are vendor-agnostic and can improve performance even on low-end integrated GPUs, underscoring WebGPU’s potential as a truly cross-platform acceleration framework.
+
 
 
 
 \chapter{Future Work}
 
-This study demonstrates that two WebGPU oriented optimizations—single CommandBuffer batch submission and Dynamic Uniform Offsets—can reduce the browser side runtime of the Pair HMM Forward algorithm to a level comparable to native CUDA, within a constant factor. While this performance is sufficient for online demonstrations and interactive teaching, further advancements are essential to meet the demands of large scale clinical pipelines and cloud based backend deployments. To this end, we propose three promising research directions—at the API, algorithmic, and ecosystem levels—each representing a logical next step. Below, we elaborate on these directions, providing concrete implementation paths and anticipating potential challenges.
+This study demonstrates that two \textbf{WebGPU-oriented optimizations} single—\texttt{CommandBuffer} batch submission and Dynamic Uniform Offsets—can reduce browser-side runtime for the \emph{Pair-HMM Forward} algorithm to within a constant factor of native CUDA. Although this performance suffices for online demonstrations and interactive teaching, larger clinical pipelines and cloud back-ends demand further gains. We therefore outline three promising research directions—API, algorithmic, and ecosystem levels—together with concrete implementation paths and anticipated challenges.
 
-\section{Closing the Double Precision Gap}
+%------------------------------------------------
+\section{Closing the Double-Precision Gap}
 
-In GPU accelerated scientific computing, \textbf{FP64} (double precision floating point) support is critical for ensuring numerical stability, particularly in applications like genomic analysis where precision impacts reliability. Currently, WebGPU guarantees only \textbf{FP32} (single precision floating point) operations. Even on hardware equipped with native double precision units—such as NVIDIA 's RTX 40 series or Apple 's M2 Max—the WebGPU Shader Language (WGSL) does not officially support an \texttt{f64} type (W3C, 2024; NVIDIA, 2023; Apple, 2023). For the Pair HMM Forward algorithm, 32 bit precision typically maintains relative errors below $10^{-5}$, which is adequate for many cases. However, when processing very long reads or accumulating extremely small probabilities, single precision risks underflow and numerical degradation, potentially compromising result accuracy.
+Double-precision (\textbf{FP64}) support is critical to many scientific workloads. WebGPU currently guarantees only \textbf{FP32} operations even on hardware with native FP64 units—e.g.\ NVIDIA RTX 40 series or Apple~M2 Max—because WGSL lacks an \texttt{f64} type (W3C, 2024; NVIDIA, 2023; Apple, 2023). For \emph{Pair-HMM}, single precision typically keeps relative error below $10^{-5}$, but very long reads risk underflow.
 
-To address this limitation, we propose the following strategy:
+\subsection*{Mixed-Precision Techniques}
 
-\subsection*{Applying Mixed Precision Techniques}
-
-This approach involves enhancing precision selectively within shaders without altering the WebGPU specification.
-
-\subsubsection*{Implementation Path}
+\paragraph{Implementation path}
 \begin{itemize}
-  \item Identify computationally sensitive parts of the Pair HMM algorithm, such as log likelihood accumulation.
-  \item Simulate \textbf{FP64} using multi channel \textbf{FP32} operations (e.g.\ split a 64 bit value into two 32 bit components), or write modular WGSL functions to emulate double precision arithmetic.
-  \item Integrate these high precision routines into the existing shader pipeline, while retaining \textbf{FP32} for all other computations to preserve throughput.
+  \item Isolate numerically sensitive stages such as log-likelihood accumulation.
+  \item Emulate FP64 by splitting a 64-bit value into two \textbf{FP32} parts, or by modular WGSL routines for double-precision arithmetic.
+  \item Retain \textbf{FP32} elsewhere to preserve throughput.
 \end{itemize}
 
-\subsubsection*{Challenge Forecast}
+\paragraph{Challenges}
 \begin{itemize}
-  \item Simulating \textbf{FP64} increases computational overhead, which may negate WebGPU optimization gains.
-  \item Mixed precision accuracy can vary across hardware due to differences in \textbf{FP32} implementations, necessitating extensive testing and tuning.
-  \item Approximation errors may accumulate over long sequences, requiring careful validation against ground truth datasets.
+  \item Software FP64 increases ALU pressure, potentially offsetting WebGPU gains.
+  \item Accuracy varies across GPUs due to differing \textbf{FP32} semantics, requiring extensive regression tests.
+  \item Approximation error may accumulate over very long sequences and needs validation against ground-truth data.
 \end{itemize}
 
-This strategy provides a practical short term solution to the double precision gap, enhancing WebGPU 's applicability to precision sensitive genomic tasks.
+%------------------------------------------------
+\section{Hybrid Acceleration with WASM+SIMD and WebGPU}
 
-\section{Hybrid Acceleration with WASM + SIMD and WebGPU}
+WebGPU excels at high throughput, but its fixed API overhead can dominate for short reads. A hybrid model that combines \textbf{WebAssembly (WASM)} plus 128-bit \textbf{SIMD} for small inputs with WebGPU for large inputs can bridge this gap (MDN Web Docs, 2023).
 
-While WebGPU excels at handling large scale workloads with high throughput, its fixed API structure and driver overheads create bottlenecks when processing short reads or fragmented inputs. To overcome this, we propose a hybrid acceleration model that integrates \textbf{WebAssembly (WASM)} with 128 bit \textbf{SIMD} (Single Instruction, Multiple Data) as a front end processing layer, complementing WebGPU 's strengths (MDN Web Docs, 2023).
+\subsection{Short sequences ($N < 512$)}
 
-\subsection{For Short Sequences (\(N < 512\))}
-
-\subsubsection*{Implementation Path}
+\paragraph{Implementation path}
 \begin{itemize}
-  \item Develop a WASM module in Rust or C++, optimized with SIMD intrinsics to accelerate the matrix operations of Pair HMM Forward.
-  \item In JavaScript, implement a dynamic dispatcher that selects WASM+SIMD for short sequences and WebGPU for longer ones, avoiding GPU cold start latency.
-  \item Leverage browser caching mechanisms to reduce WASM compilation and loading overhead.
+  \item Write a SIMDintrinsic-optimized WASM module in Rust / C++ for the DP kernel.
+  \item Add a JavaScript dispatcher that selects WASM+SIMD for short inputs and WebGPU for longer ones, avoiding GPU cold-start latency.
+  \item Cache the compiled WASM to amortize instantiation cost.
 \end{itemize}
 
-\subsubsection*{Challenge Forecast}
+\paragraph{Challenges}
 \begin{itemize}
-  \item Initial compilation and loading of WASM modules may offset benefits for very small inputs, requiring optimized caching strategies.
-  \item SIMD support varies across CPU architectures (e.g.\ x86 vs.\ ARM), necessitating portable code or multiple compiled variants.
-  \item Cross platform debugging and profiling of the hybrid setup can be complex.
+  \item Initial WASM compilation may dominate tiny inputs; caching strategies are essential.
+  \item SIMD ISA differs across x86 and ARM, requiring portable intrinsics or multiple builds.
+  \item Hybrid debugging and profiling is more complex than single-backend workflows.
 \end{itemize}
 
-\subsection{For Long Sequences}
+\subsection{Long sequences}
 
-\subsubsection*{Implementation Path}
+\paragraph{Implementation path}
 \begin{itemize}
-  \item Enhance the existing WebGPU pipeline to batch thousands of reads per dispatch, maximizing GPU utilization.
-  \item Restructure input buffers for alignment with WebGPU 's parallelism model.
-  \item Optimize command buffer submissions to reduce CPU–GPU synchronization overhead.
+  \item Batch thousands of reads per dispatch to maximize GPU occupancy.
+  \item Align input buffers with the WebGPU parallelism model.
+  \item Optimize command-buffer submission to reduce CPU–GPU synchronizations.
 \end{itemize}
 
-\subsubsection*{Challenge Forecast}
+\paragraph{Challenges}
 \begin{itemize}
-  \item Data transfer between CPU and GPU remains a bottleneck on non UMA architectures, requiring efficient buffer management and data layout (e.g.\ minimal padding or compressed formats).
-  \item Balancing dispatch sizes to avoid underutilization or memory overflow adds complexity.
+  \item On non-UMA systems, CPU–GPU transfers remain a bottleneck; buffer packing and compression may help.
+  \item Dispatch sizes must balance occupancy against memory limits.
 \end{itemize}
 
-This hybrid model improves responsiveness for small scale tasks while preserving WebGPU 's scalability for larger workloads.
-
+%------------------------------------------------
 \section{Distributed Execution Across Edge and Cloud}
 
-Running high performance algorithms like WebGPU accelerated Pair HMM directly in the browser works well for small datasets or moderate sequence lengths, enabling real time interactivity with low latency. However, clinical scale datasets—spanning millions or tens of millions of bases—exceed the capacity of a single browser or GPU, leading to impractical execution times. To reconcile local interactivity with large scale computation, we propose a distributed execution framework spanning edge (user device) and cloud resources.
+Browser-resident WebGPU suffices for moderate datasets but not for clinical workloads spanning millions of bases. A distributed framework can reconcile local interactivity with large-scale throughput.
 
-\subsection*{Implementation Path}
+\paragraph{Implementation path}
 \begin{itemize}
-  \item Develop a JavaScript scheduler that profiles the local GPU via \texttt{navigator.gpu.adapter} and estimates task complexity.
-  \item Execute lightweight tasks locally using the WebGPU pipeline.
-  \item Offload heavier workloads to cloud servers via WebRTC or WebSocket.
-  \item Deploy WebGPU compatible nodes in the cloud (e.g.\ NVIDIA GPU accelerated containers) to process large scale computations and stream back incremental results.
+  \item Build a JavaScript scheduler that profiles the local adapter via \texttt{navigator.gpu.adapter}.
+  \item Execute lightweight jobs locally; off-load heavy tasks to cloud nodes over WebRTC / WebSocket.
+  \item Run WebGPU-enabled containers in the cloud and stream partial results back incrementally.
 \end{itemize}
 
-\subsection*{Challenge Forecast}
+\paragraph{Challenges}
 \begin{itemize}
-  \item Network latency and large data transfers require advanced compression (e.g.\ run length encoding) and incremental transmission protocols.
-  \item Standardizing WebGPU support in cloud environments and ensuring data privacy (e.g.\ encryption) are critical.
-  \item The scheduler 's logic must incorporate load balancing and predictive modeling to minimize total latency, adding design complexity.
+  \item Large transfers demand compression and incremental protocols to mask latency.
+  \item Ensuring privacy and standardizing WebGPU drivers in the cloud add operational overhead.
+  \item Scheduler logic must predict load and latency, complicating design.
 \end{itemize}
 
+%------------------------------------------------
 \section*{Conclusion}
 
-The three directions outlined—applying mixed precision techniques for double precision, integrating WASM+SIMD with WebGPU in a hybrid model, and orchestrating distributed edge–cloud execution—address distinct limitations of the current browser native Pair HMM implementation. By enhancing precision, restoring low latency performance for small inputs, and scaling to clinical grade datasets without sacrificing interactivity, these efforts will elevate WebGPU accelerated genomic workflows from prototype demonstrations and teaching tools into production ready, high precision, and scalable bioinformatics solutions.```
+The three avenues—mixed precision for FP64, WASM+SIMD/WebGPU hybridity, and edge–cloud distribution—tackle precision, latency, and scale, respectively. Pursuing them can elevate WebGPU-accelerated genomic analysis from a teaching prototype to a production-ready, high-precision, and scalable solution without changing the underlying \emph{Pair-HMM} algorithm.
+
 
 
 
@@ -875,26 +849,33 @@ The three directions outlined—applying mixed precision techniques for double p
 
 \chapter{Conclusion}
 
-This work presents the first complete browser-side implementation of the Pair-HMM Forward algorithm using WebGPU, filling a gap left by earlier CUDA-centric studies (Banerjee \emph{et al}., 2017; Schmidt \emph{et al}., 2024). We systematically evaluate four implementations—C++, CUDA, WebGPU-Baseline, and WebGPU-Optimized—across three heterogeneous GPUs (RTX 2070 Super, Apple M1, and Intel UHD 620), analysing both performance and numerical correctness.
+This work presents the first complete browser-side implementation of the Pair-HMM Forward algorithm using WebGPU, filling a gap left by earlier CUDA-centric studies (Banerjee \emph{et al}., 2017; Schmidt \emph{et al}., 2024).  
+We systematically evaluate four implementations—C++, CUDA, WebGPU-Baseline, and WebGPU-Optimized—across three heterogeneous GPUs (RTX 2070 Super, Apple M1, and Intel UHD 620), analysing both performance and numerical correctness.
 
+%------------------------------------------------
 \section{Core Contributions}
 
 \begin{enumerate}
-    \item \emph{Two complementary browser-side optimizations.} \\
-    The proposed techniques—single-CommandBuffer batch submission and Dynamic Uniform Offsets reduce CPU–GPU round-trips, minimise BindGroup reconstruction overhead. For a sequence of length $N = 10^{5}$ on the RTX 2070 Super, these optimizations cut runtime from 467 s (Baseline) to 3.3 s, achieving 84 \% of CUDA performance.
+  \item \emph{Two complementary browser-side optimizations.}\\
+        The proposed techniques—single-\texttt{CommandBuffer} batch submission and Dynamic Uniform Offsets—\emph{jointly reduce} CPU–GPU round-trips \emph{and} minimise BindGroup reconstruction overhead.  
+        For a sequence length of $N = 10^{5}$ on the RTX 2070 Super, these optimizations cut run time from $466$ s (Baseline) to $3.3$ s, achieving $84\,\%$ of CUDA performance.
 
-    \item \emph{Cross-device validation.} \\
-    The same WGSL shader delivers 4–222$\times$ speed-up on Intel UHD 620 (Intel, 2018) and 9–463$\times$ on Apple M1 (Apple, 2020), confirming that the optimizations are vendor-agnostic: any browser supporting WebGPU can offer GPU acceleration without native driver installation.
+  \item \emph{Cross-device validation.}\\
+        The same WGSL shader delivers $4$–$222\times$ speed-ups on Intel UHD 620 (Intel, 2018) and $9$–$463\times$ on Apple M1 (Apple, 2020), confirming that the optimizations are vendor-agnostic—any browser with WebGPU support can enable GPU acceleration without native-driver installation.
 
-    \item \emph{A reproducible workflow for porting bioinformatics DP algorithms to the browser.} \\
-    We provide WGSL implementations and tuning strategies that address known WebGPU bottlenecks, creating a template for porting wavefront-based algorithms such as Smith–Waterman and Needleman–Wunsch to the web (Ghosh \emph{et al}., 2018).
+  \item \emph{A reproducible workflow for porting bioinformatics DP algorithms to the web.}\\
+        We provide WGSL kernels and tuning strategies that address known WebGPU bottlenecks, creating a template for porting wavefront-based algorithms such as Smith–Waterman and Needleman–Wunsch to the browser (Ghosh \emph{et al}., 2018).
 \end{enumerate}
 
+%------------------------------------------------
 \section{Academic and Industrial Impact}
 
-WebGPU is not merely a replacement for installing CUDA SDKs or provisioning cloud GPUs; it enables real-time computation within the browser sandbox, with zero driver installation and local data residency (W3C, 2024). Researchers can now perform Pair-HMM likelihood estimation on laptops and iGPU systems while retaining full data control—lowering the threshold for classroom use, clinical front-ends, and interactive open-science platforms (Google Chrome Developers, 2024).
+WebGPU is not merely a drop-in replacement for installing CUDA SDKs or provisioning cloud GPUs; it enables real-time computation inside the browser sandbox, with zero driver installation and local data residency (W3C, 2024).  
+Researchers can now run Pair-HMM likelihood estimation on laptops and integrated-GPU (iGPU) systems while retaining full data control, thereby lowering the barrier for classroom use, clinical front-ends, and interactive open-science platforms (Google Chrome Developers, 2024).
 
-In summary, the model demonstrated—driver-free, cross-hardware, and fully on-device—illustrates a concrete path for browser-native scientific GPU computing. As browser APIs and GPU hardware evolve, we anticipate many genomics applications will become fully web-executable within the next three to five years, further democratising high-performance bioinformatics and accelerating digital transformation in the biomedical domain.
+In summary, the demonstrated paradigm—driver-free, cross-hardware, and fully on-device—charts a practical path toward browser-native scientific GPU computing.  
+As browser APIs and GPU hardware continue to evolve, we anticipate that many genomics applications will become fully web-executable within the next three to five years, further democratising high-performance bioinformatics and accelerating digital transformation in biomedical research.
+
 
 
 \chapter{References}
