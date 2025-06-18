@@ -630,6 +630,14 @@ Using CUDA on the RTX~2070 Super as the reference, we define the relative error
     \bottomrule
   \end{tabularx}
 \end{table}
+\newpage
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{Relative log-likelihood error.png}
+    \caption{Bar chart displaying the relative log-likelihood error for \texttt{WGPU-Opt} on RTX~2070~S, Apple~M1, and Intel~UHD~620 versus CUDA on RTX~2070~Super, across $N$ values of $10^2$, $10^3$, $10^4$, and $10^5$.}
+    \label{log-likelihood error}
+\end{figure}
+
 
 \paragraph{Result analysis.}
 Across all three GPU architectures and all sequence lengths, the relative log-likelihood error stays below $3.8\times10^{-4}\,\%$.
