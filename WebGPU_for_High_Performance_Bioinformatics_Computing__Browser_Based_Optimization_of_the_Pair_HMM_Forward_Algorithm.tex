@@ -494,40 +494,65 @@ Table~\ref{tab:exp_env} summarises the hardware configurations and software stac
   \end{tabularx}
 \end{table}
 
-%------------------------------------------------
+
 \section{Performance Data}
 
 \subsection{RTX 2070 Super: Runtime and Relative Ratios}
-Wall-clock time $T(N)$ denotes the elapsed interval from the host invocation to result retrieval, encompassing GPU memory allocation and the \texttt{queue.submit()} call.
+Wall-clock time $T(N)$ denotes the elapsed interval from host invocation to
+result retrieval, including GPU-memory allocation and the
+\texttt{queue.submit()} call.
 
-Table~\ref{tab:rtx_performance} lists the measured runtimes of four versions—CPU, CUDA, WebGPU-Baseline (Init), and WebGPU-Optimized (Opt.)—for each sequence length, along with the ratio
+Table~\ref{tab:rtx_performance} reports the measured runtimes of four
+implementations—CPU, CUDA, WebGPU-Baseline (Init), and WebGPU-Optimized
+(Opt.)—for each sequence length $N$, together with the time ratios
 \[
-R_{X \leftarrow Y}(N)=\frac{T_Y(N)}{T_X(N)} ,
+  R_{X/\mathrm{Opt}}(N)=\frac{T_{X}(N)}{T_{\mathrm{Opt}}(N)},
 \]
-where values $\!<\!1$ indicate that version $X$ is faster than $Y$.
+where \textbf{values $>1$ indicate that WebGPU-Optimized is faster than
+$X$}, and values $<1$ indicate that it is slower.
 
 \begin{table}[h]
   \centering
-  \renewcommand{\arraystretch}{1.9}
+  \renewcommand{\arraystretch}{2}
   \setlength{\tabcolsep}{4pt}
   \small
   \begin{tabular}{|c|c|c|c|c|c|c|}
     \hline
-    $N$ & CPU (s) & CUDA (s) & WGPU-Init (s) & WGPU-Opt. (s) & Opt./CPU & Opt./CUDA \\
+    $N$ & CPU (s) & CUDA (s) & WGPU-Init (s) & WGPU-Opt.\ (s) & CPU/Opt. & CUDA/Opt. \\
     \hline
-    $10^{2}$ & 0.00330 & 0.00229 & 0.135  & 0.020  & $0.006$ & $0.11$ \\
-    $10^{3}$ & 0.327   & 0.0208  & 0.602  & 0.043  & $0.13$  & $2.07$ \\
-    $10^{4}$ & 32.80   & 0.1908  & 21.83  & 0.346  & $0.011$ & $0.55$ \\
-    $10^{5}$ & 3\,275.6 & 2.7696 & 466.8 & 3.299 & $0.0010$ & $1.19$ \\
+    $10^{2}$ & 0.00330 & 0.00229 & 0.135 & 0.020 & 0.165 & 0.115 \\
+    $10^{3}$ & 0.327   & 0.0208  & 0.602 & 0.043 & 7.60  & 0.484 \\
+    $10^{4}$ & 32.80   & 0.1908  & 21.83 & 0.346 & 94.8  & 0.551 \\
+    $10^{5}$ & 3\,275.6 & 2.7696 & 466.8 & 3.299 & 991 & 0.840 \\
     \hline
   \end{tabular}
-  \caption{Runtime and relative ratio ($R_{\,\text{Opt}\leftarrow\text{CPU}}$, $R_{\,\text{Opt}\leftarrow\text{CUDA}}$) on the RTX 2070 Super}
+  \caption{Wall-clock runtime and relative ratios on the RTX 2070 Super
+           (\textbf{CPU/Opt.} = $T_{\text{CPU}}/T_{\text{Opt}}$;
+            \textbf{CUDA/Opt.} = $T_{\text{CUDA}}/T_{\text{Opt}}$).
+           \emph{Values $>$ 1 mean WebGPU-Optimized is faster than the
+           comparator.}}
   \label{tab:rtx_performance}
 \end{table}
 
-\textit{Key finding.} WebGPU-Optimized attains between 11 \% and 119 \% of CUDA throughput, while still outperforming single-threaded CPU execution by up to three orders of magnitude.
+\textit{Key findings.}  
+\begin{itemize}
+  \item Versus single-threaded CPU, WebGPU-Optimized ranges from
+        $1/0.165 \approx 6\times$ slower (at $N=10^{2}$) to nearly
+        $1{,}000\times$ faster (at $N=10^{5}$); the larger the input,
+        the greater the advantage.
+  \item Compared with CUDA, WebGPU-Optimized starts at only
+        $0.115$ of CUDA speed (i.e.\ $8.7\times$ slower) for
+        $N=10^{2}$ owing to start-up and IPC overhead, but
+        narrows the gap as $N$ increases, reaching
+        $0.840$ of CUDA speed (84 %) at $N=10^{5}$.
+\end{itemize}
 
-At $N=10^{2}$, start-up and IPC overhead dominate, limiting WebGPU-Optimized to 11 \% of CUDA speed. As $N$ grows, Dynamic Uniform Offsets amortise these costs; by $N=10^{5}$, WebGPU-Optimized slightly surpasses CUDA, finishing within $0.53$ s of the CUDA runtime.
+At $N=10^{2}$, launch latency and inter-process communication dominate,
+so WebGPU-Optimized is $8.7\times$ slower than CUDA.  
+Dynamic Uniform Offsets amortise these costs as input length grows;
+by $N=10^{5}$ the optimized browser-side kernel is within 19 %
+of CUDA, with an absolute difference of just 0.53 s.
+
 
 % 圖片區未改動
 \begin{figure}[htbp]
@@ -557,6 +582,7 @@ At $N=10^{2}$, start-up and IPC overhead dominate, limiting WebGPU-Optimized to 
   \caption{Overall comparison of the four versions on the RTX 2070 Super}
   \label{fig:2070s-overall-4versions}
 \end{figure}
+\newpage
 
 \subsection{Apple M1 and Intel UHD 620: Cross-Platform Results}
 Because these integrated GPUs lack CUDA support, we report WebGPU-Optimized acceleration relative to CPU:
@@ -575,8 +601,8 @@ S_{\text{Opt}\leftarrow\text{CPU}}(N)=\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)
     \hline
     $10^{2}$ & 0.00391 & 0.045  & $0.087$ & 0.0101 & 0.136  & $0.074$ \\
     $10^{3}$ & 0.308   & 0.034  & $9.1$   & 0.936  & 0.234  & $4.0$ \\
-    $10^{4}$ & 31.38   & 0.272  & $115$   & 95.51  & 1.524  & $62.7$ \\
-    $10^{5}$ & 3\,347.6 & 7.245 & $463$   & 10\,851 & 48.79 & $222$ \\
+    $10^{4}$ & 31.38   & 0.272  & $115.3$   & 95.51  & 1.524  & $62.6$ \\
+    $10^{5}$ & 3\,347.6 & 7.245 & $462$   & 10\,851 & 48.79 & $222$ \\
     \hline
   \end{tabularx}
   \caption{Acceleration of WebGPU-Optimized relative to CPU on Apple M1 and Intel UHD 620}
