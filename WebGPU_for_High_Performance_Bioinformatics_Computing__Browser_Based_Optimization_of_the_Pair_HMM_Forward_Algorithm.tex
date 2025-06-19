@@ -534,24 +534,7 @@ $X$}, and values $<1$ indicate that it is slower.
   \label{tab:rtx_performance}
 \end{table}
 
-\textit{Key findings.}  
-\begin{itemize}
-  \item Versus single-threaded CPU, WebGPU-Optimized ranges from
-        $1/0.165 \approx 6\times$ slower (at $N=10^{2}$) to nearly
-        $1{,}000\times$ faster (at $N=10^{5}$); the larger the input,
-        the greater the advantage.
-  \item Compared with CUDA, WebGPU-Optimized starts at only
-        $0.115$ of CUDA speed (i.e.\ $8.7\times$ slower) for
-        $N=10^{2}$ owing to start-up and IPC overhead, but
-        narrows the gap as $N$ increases, reaching
-        $0.840$ of CUDA speed (84 %) at $N=10^{5}$.
-\end{itemize}
 
-At $N=10^{2}$, launch latency and inter-process communication dominate,
-so WebGPU-Optimized is $8.7\times$ slower than CUDA.  
-Dynamic Uniform Offsets amortise these costs as input length grows;
-by $N=10^{5}$ the optimized browser-side kernel is within 19 %
-of CUDA, with an absolute difference of just 0.53 s.
 
 
 % 圖片區未改動
@@ -665,27 +648,6 @@ Using CUDA on the RTX~2070 Super as the reference, we define the relative error
 \end{figure}
 
 
-\paragraph{Result analysis.}
-Across all three GPU architectures and all sequence lengths, the relative log-likelihood error stays below $3.8\times10^{-4}\,\%$.
-\begin{itemize}
-  \item \textbf{Sequence-length independence.} From $N=10^{2}$ to $10^{5}$, the error varies only between $1.3\times10^{-5}\,\%$ and $3.8\times10^{-4}\,\%$, indicating that floating-point round-off does not amplify with longer reads.
-  \item \textbf{Hardware consistency.} NVIDIA, Apple, and Intel show near-identical error curves, implying that differences in SPIR-V / Metal translation and driver-level \texttt{f32} arithmetic (\texttt{fma}, \texttt{log}, \texttt{exp}) have negligible impact on the final likelihood.
-  \item \textbf{Consistency with theory.} IEEE-754 single precision has a machine-epsilon of roughly $1.19\times10^{-7}$. After $10^{5}$ iterations, the worst observed relative error ($3.8\times10^{-6}$ as a fraction) remains within the same order of magnitude, confirming numerical stability.
-\end{itemize}
-
-\paragraph{Origin of the residual error.}
-Although the algorithm is identical, moving from CUDA to WebGPU introduces several hardware- and driver-level differences that accumulate tiny floating-point deviations:
-\begin{itemize}
-  \item \textbf{FMA fusion policy.} CUDA guarantees that every \texttt{a*b+c} is fused into a single FMA (one rounding), whereas WebGPU shaders may emit a separate multiply and add, causing an extra rounding step.
-  \item \textbf{Polynomial approximations for \texttt{log}/\texttt{exp}.} CUDA’s \texttt{libdevice} and each WebGPU driver use different coefficients, typically differing by up to $\pm$3–4 ULP, which translates into $\approx10^{-6}$ fractional error after thousands of calls.
-  \item \textbf{Flush-to-Zero (FTZ) handling.} Mobile or integrated GPUs often enable FTZ by default in WebGPU, zeroing sub-normal values that CUDA still represents exactly, slightly perturbing sums of very small probabilities.
-  \item \textbf{Compiler reassociation.} During WGSL $\rightarrow$ SPIR-V/Metal optimization, common-subexpression elimination and reassociation can legally reorder floating-point additions, changing the rounding path while remaining IEEE-754 compliant.
-\end{itemize}
-
-\paragraph{Implications for variant calling.}
-Production pipelines such as GATK and DeepVariant typically tolerate log-likelihood errors in the $10^{-2}$–$10^{-3}$ range. Our WebGPU implementation is two orders of magnitude tighter, ensuring that browser-based execution maintains scientific correctness for downstream variant calling.
-
-
 \section{Summary}
 WebGPU-Optimized attains up to 94\% of CUDA performance on the RTX 2070 Super while retaining a three-order-of-magnitude advantage over single-threaded CPU execution.  
 
@@ -698,11 +660,31 @@ Across all platforms, relative log-likelihood errors remain below $4\times10^{-4
 
 
 \chapter{Discussion}
+\section{Performance Analysis}
+\subsection{RTX 2070 S: Performance Scaling and CUDA Gap}  
+\begin{itemize}
+  \item Versus single-threaded CPU, WebGPU-Optimized ranges from
+        $1/0.165 \approx 6\times$ slower (at $N=10^{2}$) to nearly
+        $1{,}000\times$ faster (at $N=10^{5}$); the larger the input,
+        the greater the advantage.
+  \item Compared with CUDA, WebGPU-Optimized starts at only
+        $0.115$ of CUDA speed (i.e.\ $8.7\times$ slower) for
+        $N=10^{2}$ owing to start-up and IPC overhead, but
+        narrows the gap as $N$ increases, reaching
+        $0.840$ of CUDA speed (84 %) at $N=10^{5}$.
+\end{itemize}
 
-\section{Performance Differences and Bottlenecks}
+At $N=10^{2}$, launch latency and inter-process communication dominate,
+so WebGPU-Optimized is $8.7\times$ slower than CUDA.  
+Dynamic Uniform Offsets amortise these costs as input length grows;
+by $N=10^{5}$ the optimized browser-side kernel is within 19 %
+of CUDA, with an absolute difference of just 0.53 s.
+
+
+\subsection{Cross-GPU Bottlenecks}
 Even on the RTX 2070 Super, our WebGPU-Optimized version still trails CUDA by up to 6\,\%--19\,\% in wall-clock time, while on Apple M1 and Intel UHD 620 it delivers tens- to hundreds-fold acceleration over single-threaded CPU code. The residual gap therefore stems not from algorithmic flow but from the interaction between micro-architecture and API design. Two root causes emerge: SFU Throughput Bottleneck and resource-binding overhead.
 
-\paragraph{SFU Throughput Bottleneck.}
+\subsection{SFU Throughput Bottleneck.}
 On RTX~2070~S, both CUDA and WebGPU map \texttt{log}/\texttt{exp} to
 \texttt{MUFU.LOG/EX2}; the \emph{dependent latency} is therefore the same.
 The observed gap stems instead from \emph{throughput}: each
@@ -760,8 +742,28 @@ A full conversion, however, would require revisiting the bind-group layout and w
 Quantitative evaluation is left for future work once subgroup support and finer-grained shader timers become available.
 
 
+\section{Numerical Stability and Error Analysis}
+Across all three GPU architectures and all sequence lengths, the relative log-likelihood error stays below $3.8\times10^{-4}\,\%$.
+\begin{itemize}
+  \item \textbf{Sequence-length independence.} From $N=10^{2}$ to $10^{5}$, the error varies only between $1.3\times10^{-5}\,\%$ and $3.8\times10^{-4}\,\%$, indicating that floating-point round-off does not amplify with longer reads.
+  \item \textbf{Hardware consistency.} NVIDIA, Apple, and Intel show near-identical error curves, implying that differences in SPIR-V / Metal translation and driver-level \texttt{f32} arithmetic (\texttt{fma}, \texttt{log}, \texttt{exp}) have negligible impact on the final likelihood.
+  \item \textbf{Consistency with theory.} IEEE-754 single precision has a machine-epsilon of roughly $1.19\times10^{-7}$. After $10^{5}$ iterations, the worst observed relative error ($3.8\times10^{-6}$ as a fraction) remains within the same order of magnitude, confirming numerical stability.
+\end{itemize}
 
-\subsection{Lessons from \textit{gpuPairHMM}}
+\paragraph{Origin of the residual error.}
+Although the algorithm is identical, moving from CUDA to WebGPU introduces several hardware- and driver-level differences that accumulate tiny floating-point deviations:
+\begin{itemize}
+  \item \textbf{FMA fusion policy.} CUDA guarantees that every \texttt{a*b+c} is fused into a single FMA (one rounding), whereas WebGPU shaders may emit a separate multiply and add, causing an extra rounding step.
+  \item \textbf{Polynomial approximations for \texttt{log}/\texttt{exp}.} CUDA’s \texttt{libdevice} and each WebGPU driver use different coefficients, typically differing by up to $\pm$3–4 ULP, which translates into $\approx10^{-6}$ fractional error after thousands of calls.
+  \item \textbf{Flush-to-Zero (FTZ) handling.} Mobile or integrated GPUs often enable FTZ by default in WebGPU, zeroing sub-normal values that CUDA still represents exactly, slightly perturbing sums of very small probabilities.
+  \item \textbf{Compiler reassociation.} During WGSL $\rightarrow$ SPIR-V/Metal optimization, common-subexpression elimination and reassociation can legally reorder floating-point additions, changing the rounding path while remaining IEEE-754 compliant.
+\end{itemize}
+
+\paragraph{Implications for variant calling.}
+Production pipelines such as GATK and DeepVariant typically tolerate log-likelihood errors in the $10^{-2}$–$10^{-3}$ range. Our WebGPU implementation is two orders of magnitude tighter, ensuring that browser-based execution maintains scientific correctness for downstream variant calling.
+
+
+\section{Lessons from \textit{gpuPairHMM}}
 Recent work by Schmidt \emph{et~al}. on \textit{gpuPairHMM} shows that a wavefront-based, register-resident kernel combined with warp-shuffle intrinsics can reach up to $2.6$ TCUPS (trillions of cell updates per second) on an NVIDIA L40S, outperforming prior GPU, CPU, and FPGA implementations by more than an order of magnitude \cite{Schmidt2024gpuPairHMM}. Three design decisions are particularly instructive for WebGPU:
 
 \begin{itemize}
