@@ -647,10 +647,19 @@ Across all three GPU architectures and all sequence lengths, the relative log-li
   \item \textbf{Consistency with theory.} IEEE-754 single precision has a machine-epsilon of roughly $1.19\times10^{-7}$. After $10^{5}$ iterations, the worst observed relative error ($3.8\times10^{-6}$ as a fraction) remains within the same order of magnitude, confirming numerical stability.
 \end{itemize}
 
+\paragraph{Origin of the residual error.}
+Although the algorithm is identical, moving from CUDA to WebGPU introduces several hardware- and driver-level differences that accumulate tiny floating-point deviations:
+\begin{itemize}
+  \item \textbf{FMA fusion policy.} CUDA guarantees that every \texttt{a*b+c} is fused into a single FMA (one rounding), whereas WebGPU shaders may emit a separate multiply and add, causing an extra rounding step.
+  \item \textbf{Polynomial approximations for \texttt{log}/\texttt{exp}.} CUDA’s \texttt{libdevice} and each WebGPU driver use different coefficients, typically differing by up to $\pm$3–4 ULP, which translates into $\approx10^{-6}$ fractional error after thousands of calls.
+  \item \textbf{Flush-to-Zero (FTZ) handling.} Mobile or integrated GPUs often enable FTZ by default in WebGPU, zeroing sub-normal values that CUDA still represents exactly, slightly perturbing sums of very small probabilities.
+  \item \textbf{Compiler reassociation.} During WGSL $\rightarrow$ SPIR-V/Metal optimization, common-subexpression elimination and reassociation can legally reorder floating-point additions, changing the rounding path while remaining IEEE-754 compliant.
+\end{itemize}
+
 \paragraph{Implications for variant calling.}
 Production pipelines such as GATK and DeepVariant typically tolerate log-likelihood errors in the $10^{-2}$–$10^{-3}$ range. Our WebGPU implementation is two orders of magnitude tighter, ensuring that browser-based execution maintains scientific correctness for downstream variant calling.
 
-%------------------------------------------------
+
 \section{Summary}
 WebGPU-Optimized attains up to 94\% of CUDA performance on the RTX 2070 Super while retaining a three-order-of-magnitude advantage over single-threaded CPU execution.  
 
@@ -665,18 +674,19 @@ Across all platforms, relative log-likelihood errors remain below $4\times10^{-4
 \chapter{Discussion}
 
 \section{Performance Differences and Bottlenecks}
-Even on the RTX 2070 Super, our WebGPU-Optimized version still trails CUDA by up to 6\,\%--19\,\% in wall-clock time, while on Apple M1 and Intel UHD 620 it delivers tens- to hundreds-fold acceleration over single-threaded CPU code. The residual gap therefore stems not from algorithmic flow but from the interaction between micro-architecture and API design. Two root causes emerge: the absence of hardware special-function units (SFUs) and resource-binding overhead.
+Even on the RTX 2070 Super, our WebGPU-Optimized version still trails CUDA by up to 6\,\%--19\,\% in wall-clock time, while on Apple M1 and Intel UHD 620 it delivers tens- to hundreds-fold acceleration over single-threaded CPU code. The residual gap therefore stems not from algorithmic flow but from the interaction between micro-architecture and API design. Two root causes emerge: SFU Throughput Bottleneck and resource-binding overhead.
 
-\subsection{Impact of Missing SFUs on \texttt{log}/\texttt{exp} Throughput}
-As illustrated in Figure~\ref{fig:log_exp_pipeline}, post-Volta NVIDIA GPUs integrate dedicated SFUs that complete a warp’s \texttt{log}/\texttt{exp} operations in a handful of cycles.  
-WebGPU, by contrast, must guarantee identical semantics across NVIDIA, AMD, Intel, and Apple devices; it therefore decomposes each transcendental call into mantissa–exponent extraction, LUT approximation, and polynomial correction via fused-multiply-add instructions. This software path is roughly two to three times slower than a native SFU.
+\paragraph{SFU Throughput Bottleneck.}
+On RTX~2070~S, both CUDA and WebGPU map \texttt{log}/\texttt{exp} to
+\texttt{MUFU.LOG/EX2}; the \emph{dependent latency} is therefore the same.
+The observed gap stems instead from \emph{throughput}: each
+SM sub-partition has a single variable-latency pipeline shared by all SFU
+instructions, allowing at most \textbf{one transcendental issue every
+four cycles}\.
+When three data-dependent \texttt{log}/\texttt{exp} appear back-to-back,
+a warp must stall for the pipeline, whereas CUDA kernels
+can interleave independent warp work.
 
-\begin{figure}[h]
-    \centering
-    \includegraphics[width=1\linewidth]{CUDA vs WebGPU log-exp 管線圖.png}
-    \caption{Latency comparison between CUDA SFU and WebGPU software \texttt{log}/\texttt{exp} pipeline}
-    \label{fig:log_exp_pipeline}
-\end{figure}
 
 Each DP cell in Pair-HMM invokes dozens of \texttt{log}/\texttt{exp} operations. For a $100\,000$-base sequence the total easily reaches billions of transcendental evaluations, so the per-instruction latency gap dominates total runtime as $N$ grows.
 
@@ -743,7 +753,7 @@ Recent work by Schmidt \emph{et~al}. on \textit{gpuPairHMM} shows that a wavefro
 
 Adopting these tactics should further improve WebGPU performance without altering the underlying Pair-HMM algorithm.
 
-%------------------------------------------------
+
 \section{Cross-Hardware Performance}
 
 \subsection{Apple M1: Pros and Cons of a Unified-Memory Architecture (UMA)}
