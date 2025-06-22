@@ -247,8 +247,6 @@ By porting Yu-Chen Chou's (2024) CUDA implementation to WebGPU, this work propos
 
 
 \chapter{Methods}
-
-%------------------------------------------------
 \section{Synthetic Dataset Generation}\label{sec:dataset}
 To evaluate the performance of the proposed GPU-accelerated Pair-HMM, we
 dynamically generate four deterministic test sets of length
@@ -467,8 +465,6 @@ With the optimisations applied, the WebGPU implementation trails CUDA by only 19
 
 	
 \chapter{Results}
-
-%------------------------------------------------
 \section{Experimental Environment}
 To ensure reproducibility, all WebGPU tests were conducted in Chrome 135.0.7049.95 (Google Chrome Developers, 2024). The Apple M1 and Intel UHD 620 platforms were upgraded to the same browser build; corresponding operating-system versions are listed in Table \ref{tab:exp_env}.
 
@@ -536,8 +532,6 @@ $X$}, and values $<1$ indicate that it is slower.
 
 
 
-
-% 圖片區未改動
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=1\linewidth]{2070s-1.png}
@@ -578,7 +572,13 @@ S_{\text{Opt}\leftarrow\text{CPU}}(N)=\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)
   \renewcommand{\arraystretch}{1.9}
   \setlength{\tabcolsep}{4pt}
   \small
-  \begin{tabularx}{\textwidth}{|c|X|X|X|X|X|X|}
+  \begin{tabularx}{\textwidth}{|c|
+    >{\centering\arraybackslash}X|
+    >{\centering\arraybackslash}X|
+    >{\centering\arraybackslash}X|
+    >{\centering\arraybackslash}X|
+    >{\centering\arraybackslash}X|
+    >{\centering\arraybackslash}X|}
     \hline
     $N$ & M1 CPU (s) & M1 Opt. (s) & Accel. & UHD CPU (s) & UHD Opt. (s) & Accel. \\
     \hline
@@ -591,6 +591,7 @@ S_{\text{Opt}\leftarrow\text{CPU}}(N)=\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)
   \caption{Acceleration of WebGPU-Optimized relative to CPU on Apple M1 and Intel UHD 620}
   \label{tab:cross_platform}
 \end{table}
+
 
 \begin{figure}[h]
   \centering
@@ -627,7 +628,7 @@ Using CUDA on the RTX~2070 Super as the reference, we define the relative error
   \caption{Relative log-likelihood error (vs.\ CUDA, RTX 2070 Super)}
   \label{tab:likelihood_error}
   \setlength{\tabcolsep}{6pt}
-  \renewcommand{\arraystretch}{1.6}
+  \renewcommand{\arraystretch}{1.9}
   \small
   \begin{tabularx}{\textwidth}{@{}X c c c c@{}}
     \toprule
