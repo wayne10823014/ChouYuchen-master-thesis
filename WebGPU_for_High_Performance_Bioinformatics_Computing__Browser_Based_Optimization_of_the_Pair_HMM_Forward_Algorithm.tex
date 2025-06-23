@@ -685,19 +685,34 @@ of CUDA, with an absolute difference of just 0.53 s.
 \subsection{Cross-GPU Bottlenecks}
 Even on the RTX 2070 Super, our WebGPU-Optimized version still trails CUDA by up to 6\,\%--19\,\% in wall-clock time, while on Apple M1 and Intel UHD 620 it delivers tens- to hundreds-fold acceleration over single-threaded CPU code. The residual gap therefore stems not from algorithmic flow but from the interaction between micro-architecture and API design. Two root causes emerge: SFU Throughput Bottleneck and resource-binding overhead.
 
-\subsection{SFU Throughput Bottleneck.}
-On RTX~2070~S, both CUDA and WebGPU map \texttt{log}/\texttt{exp} to
-\texttt{MUFU.LOG/EX2}; the \emph{dependent latency} is therefore the same.
-The observed gap stems instead from \emph{throughput}: each
-SM sub-partition has a single variable-latency pipeline shared by all SFU
-instructions, allowing at most \textbf{one transcendental issue every
-four cycles}\.
+\subsection{SFU Throughput Bottleneck}
+
+On RTX~2070~S, both CUDA and WebGPU compile each
+\texttt{log}/\texttt{exp} into \texttt{MUFU.LOG/EX2}, so the
+\emph{dependent latency} of a single transcendental
+($\approx 12$ cycles on Turing) is identical.
+
+The performance gap instead comes from \emph{issue bandwidth}:
+within every SM sub-partition, all instructions—FP32 or SFU—must pass
+through the \textbf{same warp issue slot}.
+Moreover, the variable-latency SFU pipeline is only eight lanes wide,
+so a 32-thread warp needs four cycles to be fully dispatched,
+i.e., at most \textbf{one transcendental warp-issue every four cycles}.\footnote{See NVIDIA forum post on “variable/long-latency pipelines (xu/mufu/sfu)” and lane width limitations.}
+
 When three data-dependent \texttt{log}/\texttt{exp} appear back-to-back,
-a warp must stall for the pipeline, whereas CUDA kernels
-can interleave independent warp work.
+the warp must wait for the shared slot. CUDA kernels keep
+$\geq 32$ resident warps, letting the scheduler interleave
+independent warps to hide this stall.
+In contrast, WebGPU shaders often have $<16$ active warps,
+so SFU latency surfaces as a hard bottleneck.
+
+Each DP cell in Pair-HMM invokes $\sim 12$ such operations;
+for a 100{,}000-base read, the kernel executes
+$\mathcal{O}(10^{9})$ transcendentals, so the
+\emph{throughput} limit of the SFU
+becomes the dominant factor as $N$ grows.
 
 
-Each DP cell in Pair-HMM invokes dozens of \texttt{log}/\texttt{exp} operations. For a $100\,000$-base sequence the total easily reaches billions of transcendental evaluations, so the per-instruction latency gap dominates total runtime as $N$ grows.
 
 \subsection{API Overhead: Pointer Rotation vs.\ BindGroup Reconstruction}
 CUDA rotates three pointers (\texttt{prev}, \texttt{curr}, \texttt{new}) without allocation or validation.  
