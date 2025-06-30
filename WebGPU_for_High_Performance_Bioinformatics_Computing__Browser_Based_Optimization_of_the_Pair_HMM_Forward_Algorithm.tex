@@ -47,8 +47,8 @@
 %% \newcommand*\CoAdvisorB英文{}
 
 
-\newcommand*\YearMonth英文{July, 2025}
-\newcommand*\YearMonth中文{１１４年７月}
+\newcommand*\YearMonth英文{June, 2025}
+\newcommand*\YearMonth中文{１１４年６月}
 
 \pagestyle{fancy}% Use fancyhdr
 
@@ -164,9 +164,9 @@ Since WebGPU reached Chrome stable in May 2024 \cite{Chrome2024-blog}, Firefox N
 While WebGPU promises zero installation, cross-hardware portability, and on-device data residency, it was designed primarily for graphics and machine-learning inference. A dynamic-programming kernel such as Pair-HMM Forward encounters several obstacles:
 
 \begin{itemize}
-  \item \textit{API scheduling overhead} – Wavefronts must be processed sequentially; if each dispatch creates fresh command buffers and bind groups, CPU ↔ GPU round-trips accumulate rapidly.
+    \item \textit{API scheduling overhead} — Wavefronts must be processed sequentially; if each dispatch creates fresh command buffers and bind groups, CPU–GPU round-trips accumulate rapidly.
+    
   \item \textit{Lack of global synchronization} – Every wavefront depends on the previous one, yet WebGPU exposes only workgroup-level barriers and lacks CUDA-style kernel-return global sync \cite{W3C2024-webgpu}.
-  \item \textit{Absence of dedicated special-function units (SFUs)} – Pair-HMM issues many \verb|log|/\verb|exp| calls. CUDA's SFUs finish $\log_{2}$ in four cycles \cite{NVIDIA2023-cudaguide}, whereas WebGPU must approximate via alu + lut + fma, incurring a 2–4$\times$ latency penalty.
   \item \textit{High memory-access demand} – The DP matrix resides in a read–write storage buffer; WebGPU's default path bypasses L1 cache, so frequent global reads/writes incur heavy DRAM traffic \cite{Liu2021-bib}.
 \end{itemize}
 
@@ -391,7 +391,7 @@ This layout also paves the way for the WebGPU port: once inside the browser we l
 \subsubsection{From CUDA “multiple kernels” to WebGPU “multiple dispatches”}
 Pair-HMM Forward advances along anti-diagonals; each wavefront must finish before the next can begin \cite{Durbin1998}. The straightforward CUDA strategy is a host-side loop that launches successive kernels with a \texttt{cudaDeviceSynchronize()} between them, as in earlier studies \cite{Banerjee2017,Schmidt2024-gpuPairHMM}. Figure~\ref{fig:global-sync-diff} shows that this barrier stays entirely on the GPU.
 
-By contrast, WebGPU lacks a device-side global barrier; synchronisation returns to JavaScript and issues a new \texttt{dispatch} \cite{W3C2024-webgpu}. For length $N$, this triggers $2N$ CPU$\leftrightarrow$GPU round-trips \cite{Chrome2024-blog}, the Baseline’s first major bottleneck.
+By contrast, WebGPU lacks a device-side global barrier; synchronisation returns to JavaScript and issues a new \texttt{dispatch} \cite{W3C2024-webgpu}. For length $N$, this triggers $2N$ CPU$\leftrightarrow$GPU round-trips \cite{Chrome2024-blog}, the Baseline's first major bottleneck.
 
 \begin{figure}[htbp]
     \centering
@@ -423,12 +423,12 @@ On an NVIDIA RTX 2070 Super the Baseline takes about $466$ s when $N=100\,000$, 
 
 \subsection{Optimized WebGPU Version}
 
-To remove the Baseline’s two dominant bottlenecks—
+To remove the Baseline's two dominant bottlenecks—
 \begin{enumerate}
   \item frequent host synchronisations
   \item repeated BindGroup constructions
 \end{enumerate}
-—we introduce two browser-side optimisations: \emph{single-CommandBuffer batch submission} and \emph{Dynamic Uniform Offsets}. Below we first recap WebGPU’s command-recording model \cite{W3C2024-webgpu} and then detail each optimisation’s rationale, implementation, and impact.
+—we introduce two browser-side optimisations: \emph{single-CommandBuffer batch submission} and \emph{Dynamic Uniform Offsets}. Below we first recap WebGPU's command-recording model \cite{W3C2024-webgpu} and then detail each optimisation's rationale, implementation, and impact.
 
 \subsubsection{Single-CommandBuffer Batch Submission — Reducing CPU–GPU Round-Trips}
 Figure~\ref{fig:scb-batch-workflow} illustrates the workflow. All $2N$ \texttt{dispatchWorkgroups} calls are recorded into one \texttt{CommandBuffer}. A single \texttt{queue.submit()} then sends the entire stream to the GPU, eliminating \(>\!99\,\%\) of IPC latency \cite{Chrome2024-blog}.
@@ -752,7 +752,7 @@ Dynamic Uniform Offsets remove the need to rebind uniform data, yet the three mu
 \textit{(Scaling has not yet been implemented in the current prototype; this section evaluates its feasibility.)}
 
 The present WebGPU kernel uses the conventional \emph{log-space} formulation to avoid underflow on long read–haplotype pairs \cite{Durbin1998}.  
-While mathematically robust, each dynamic-programming (DP) cell requires one \texttt{exp} and one \texttt{log}, hitting WebGPU’s software-emulated SFU pipeline twice per update \cite{NVIDIA2023-cudaguide} .
+While mathematically robust, each dynamic-programming (DP) cell requires one \texttt{exp} and one \texttt{log}, hitting WebGPU's software-emulated SFU pipeline twice per update \cite{NVIDIA2023-cudaguide} .
 
 \vspace{0.4em}
 \noindent\textbf{Scaling as an alternative.}\;
@@ -794,7 +794,7 @@ Across all three GPU architectures and all sequence lengths, the relative log-li
 Although the algorithm is identical, moving from CUDA to WebGPU introduces several hardware- and driver-level differences that accumulate tiny floating-point deviations:
 \begin{itemize}
   \item \textbf{FMA fusion policy.} CUDA guarantees that every \texttt{a*b+c} is fused into a single FMA (one rounding), whereas WebGPU shaders may emit a separate multiply and add, causing an extra rounding step.
-  \item \textbf{Polynomial approximations for \texttt{log}/\texttt{exp}.} CUDA’s \texttt{libdevice} and each WebGPU driver use different coefficients, typically differing by up to $\pm$3–4 ULP, which translates into $\approx10^{-6}$ fractional error after thousands of calls.
+  \item \textbf{Polynomial approximations for \texttt{log}/\texttt{exp}.} CUDA's \texttt{libdevice} and each WebGPU driver use different coefficients, typically differing by up to $\pm$3–4 ULP, which translates into $\approx10^{-6}$ fractional error after thousands of calls.
   \item \textbf{Flush-to-Zero (FTZ) handling.} Mobile or integrated GPUs often enable FTZ by default in WebGPU, zeroing sub-normal values that CUDA still represents exactly, slightly perturbing sums of very small probabilities.
   \item \textbf{Compiler reassociation.} During WGSL $\rightarrow$ SPIR-V/Metal optimization, common-subexpression elimination and reassociation can legally reorder floating-point additions, changing the rounding path while remaining IEEE-754 compliant.
 \end{itemize}
@@ -827,7 +827,7 @@ Adopting these tactics should further improve WebGPU performance without alterin
 \section{Cross-Hardware Performance}
 
 \subsection{Apple M1: Pros and Cons of a Unified-Memory Architecture (UMA)}
-Apple’s M1 employs a UMA design that shares 8 GB of LPDDR4X between CPU and GPU, eliminating discrete memory transfers \cite{Apple2020-m1}.  
+Apple's M1 employs a UMA design that shares 8 GB of LPDDR4X between CPU and GPU, eliminating discrete memory transfers \cite{Apple2020-m1}.  
 For moderate $N$ values, \texttt{copyBufferToBuffer()} degrades to a pointer-offset adjustment rather than true DMA, reducing WebGPU start-up latency relative to discrete GPUs.
 
 At large $N$, however, CPU–GPU bandwidth contention emerges, and the M1 remains about $2.2\times$ slower than the RTX 2070 Super.  
@@ -840,7 +840,7 @@ The Chrome–Dawn–DX12 stack serialises command submission via a submit-fence 
 Its 768 KB L3 cache is easily thrashed when multiple storage buffers interleave, causing frequent L2 misses.  
 Despite these constraints, our optimisations still achieve a $222\times$ speed-up at $N = 100\,000$.
 
-These results confirm that the proposed WebGPU optimisations are vendor-agnostic and can improve performance even on low-end integrated GPUs, underscoring WebGPU’s potential as a truly cross-platform acceleration framework.
+These results confirm that the proposed WebGPU optimisations are vendor-agnostic and can improve performance even on low-end integrated GPUs, underscoring WebGPU's potential as a truly cross-platform acceleration framework.
 
 
 
