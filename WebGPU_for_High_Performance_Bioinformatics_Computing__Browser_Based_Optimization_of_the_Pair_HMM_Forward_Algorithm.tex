@@ -66,7 +66,7 @@
 
 % ---------- Keywords ----------
 \newcommand*\Keywords英文{WebGPU, Pair-Hidden Markov Model, Bioinformatics Acceleration}
-\newcommand*\Keywords中文{瀏覽器 GPU 計算、Pair-Hidden Markov Model (Pair-HMM)、生物資訊加速}
+\newcommand*\Keywords中文{瀏覽器 GPU 計算、成對隱馬可夫模型、生物資訊加速}
 
 
 % ---------- Abstract (English) ----------
@@ -93,9 +93,6 @@ These findings demonstrate that pure JavaScript and WGSL can execute the Pair-HM
 
 研究結果證實，僅憑 JavaScript 與 WGSL，即能在瀏覽器中於秒級完成 Pair-HMM Forward 計算。我們提出兩項瀏覽器端專屬優化策略，並提供跨硬體之詳細效能量測，為 Web 原生基因體分析工具奠定基礎，推動生物資訊運算的民主化與即時化。%
 }
-
-
-
 
 
 
@@ -528,8 +525,9 @@ Table~\ref{tab:rtx_performance} reports the measured runtimes of four
 implementations—CPU, CUDA, WebGPU-Baseline (Init), and WebGPU-Optimized
 (Opt.)—for each sequence length $N$, together with the time ratios
 \[
-  R_{X/\mathrm{Opt}}(N)=\frac{T_{X}(N)}{T_{\mathrm{Opt}}(N)},
+\frac{T_{X}(N)}{T_{\mathrm{Opt}}(N)}
 \]
+
 where values $>1$ indicate that WebGPU-Optimized is faster than
 $X$, and values $<1$ indicate that it is slower.
 
@@ -591,7 +589,7 @@ $X$, and values $<1$ indicate that it is slower.
 \subsection{Apple M1 and Intel UHD 620: Cross-Platform Results}
 Because these integrated GPUs lack CUDA support\cite{Apple2020-m1,Intel2018-uhd620}, we report WebGPU-Optimized acceleration relative to CPU:
 \[
-S_{\text{Opt}\leftarrow\text{CPU}}(N)=\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)} .
+\frac{T_{\text{CPU}}(N)}{T_{\text{Opt}}(N)}
 \]
 
 \begin{table}[h]
@@ -974,7 +972,6 @@ As browser APIs and GPU hardware continue to evolve, we anticipate that many gen
 
 
 \newpage
-\AddToContents{Bibliography}
 \printbibliography[
   heading=bibintoc,
   title={Reference}
